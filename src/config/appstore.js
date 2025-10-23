@@ -8,7 +8,7 @@ const config = {
   apiBaseUrl: process.env.API_BASE_URL || 'https://api.appstoreconnect.apple.com/v1',
   
   // JWT token configuration
-  tokenExpiration: 20 * 60, // 20 minutes (Apple's maximum)
+  tokenExpiration: 10 * 60, // 20 minutes (Apple's maximum)
   
   // API endpoints
   endpoints: {

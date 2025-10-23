@@ -89,6 +89,17 @@ npm start
 
 The server will start on `http://localhost:3000`
 
+### 5. Troubleshoot Authentication (If Needed)
+
+If you get authentication errors, use the built-in debugger:
+
+```bash
+# Run the authentication debugger
+npm run debug-auth
+```
+
+This will check your configuration and help identify any issues. See `AUTHENTICATION_SETUP.md` for detailed troubleshooting.
+
 ## API Endpoints
 
 ### Health Check

@@ -17,6 +17,7 @@ const {
 
 // Import routes
 const subscriptionRoutes = require('./src/routes/subscriptions');
+const appRoutes = require('./src/routes/apps');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -91,6 +92,9 @@ app.use('/api/subscriptions',
   subscriptionRoutes
 );
 
+// App management routes
+app.use('/api/apps', appRoutes);
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -99,6 +103,7 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
+      apps: '/api/apps',
       subscriptions: '/api/subscriptions',
       documentation: '/api/docs' // Future implementation
     }

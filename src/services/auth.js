@@ -46,11 +46,13 @@ class AppStoreAuthService {
         iat: now,
         exp: expirationTime,
         aud: 'appstoreconnect-v1'
+        
       };
 
       const token = jwt.sign(payload, this.privateKey, {
         algorithm: 'ES256',
-        keyid: config.keyId
+        keyid: config.keyId,
+        header: {typ: 'JWT' }
       });
 
       this.token = token;
