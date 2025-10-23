@@ -8,12 +8,13 @@ class AppController {
    * GET /api/apps
    */
   getAllApps = handleAsyncError(async (req, res) => {
+    // empty string need to be "" for apple to respond 
     const options = {
-      bundleId: req.query.bundleId,
-      name: req.query.name,
-      platform: req.query.platform,
-      includes: req.query.includes,
-      limit: req.query.limit
+      bundleId: req.query.bundleId ?? "" ,
+      name: req.query.name ?? "" ,
+      platform: req.query.platform ?? "" ,
+      includes: req.query.includes ?? "" ,
+      limit: req.query.limit ?? 2
     };
 
     const result = await appService.getAllApps(options);
