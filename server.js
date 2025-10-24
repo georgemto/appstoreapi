@@ -18,6 +18,10 @@ const {
 // Import routes
 const subscriptionRoutes = require('./src/routes/subscriptions');
 const appRoutes = require('./src/routes/apps');
+const buildsRoutes = require('./src/routes/builds');
+const certificatesRoutes = require('./src/routes/certificates');
+const devicesRoutes = require('./src/routes/devices');
+const betaRoutes = require('./src/routes/beta');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -95,6 +99,18 @@ app.use('/api/subscriptions',
 // App management routes
 app.use('/api/apps', appRoutes);
 
+// Build management routes
+app.use('/api/builds', buildsRoutes);
+
+// Certificate management routes
+app.use('/api/certificates', certificatesRoutes);
+
+// Device management routes
+app.use('/api/devices', devicesRoutes);
+
+// Beta testing routes
+app.use('/api/beta', betaRoutes);
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -105,6 +121,10 @@ app.get('/', (req, res) => {
       health: '/health',
       apps: '/api/apps',
       subscriptions: '/api/subscriptions',
+      builds: '/api/builds',
+      certificates: '/api/certificates',
+      devices: '/api/devices',
+      beta: '/api/beta',
       documentation: '/api/docs' // Future implementation
     }
   });

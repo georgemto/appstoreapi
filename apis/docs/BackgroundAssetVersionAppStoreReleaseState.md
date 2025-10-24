@@ -1,0 +1,24 @@
+# AppStoreConnectApi.BackgroundAssetVersionAppStoreReleaseState
+
+## Enum
+
+
+* `PREPARE_FOR_SUBMISSION` (value: `"PREPARE_FOR_SUBMISSION"`)
+
+* `READY_FOR_REVIEW` (value: `"READY_FOR_REVIEW"`)
+
+* `WAITING_FOR_REVIEW` (value: `"WAITING_FOR_REVIEW"`)
+
+* `IN_REVIEW` (value: `"IN_REVIEW"`)
+
+* `ACCEPTED` (value: `"ACCEPTED"`)
+
+* `REJECTED` (value: `"REJECTED"`)
+
+* `PROCESSING_FOR_DISTRIBUTION` (value: `"PROCESSING_FOR_DISTRIBUTION"`)
+
+* `READY_FOR_DISTRIBUTION` (value: `"READY_FOR_DISTRIBUTION"`)
+
+* `SUPERSEDED` (value: `"SUPERSEDED"`)
+
+

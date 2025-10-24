@@ -1,0 +1,50 @@
+# AppStoreConnectApi.NominationAttributes
+
+## Properties
+
+Name | Type | Description | Notes
+------------ | ------------- | ------------- | -------------
+**name** | **String** |  | [optional] 
+**type** | **String** |  | [optional] 
+**description** | **String** |  | [optional] 
+**createdDate** | **Date** |  | [optional] 
+**lastModifiedDate** | **Date** |  | [optional] 
+**submittedDate** | **Date** |  | [optional] 
+**state** | **String** |  | [optional] 
+**publishStartDate** | **Date** |  | [optional] 
+**publishEndDate** | **Date** |  | [optional] 
+**deviceFamilies** | [**[DeviceFamily]**](DeviceFamily.md) |  | [optional] 
+**locales** | **[String]** |  | [optional] 
+**supplementalMaterialsUris** | **[String]** |  | [optional] 
+**hasInAppEvents** | **Boolean** |  | [optional] 
+**launchInSelectMarketsFirst** | **Boolean** |  | [optional] 
+**notes** | **String** |  | [optional] 
+**preOrderEnabled** | **Boolean** |  | [optional] 
+
+
+
+## Enum: TypeEnum
+
+
+* `APP_LAUNCH` (value: `"APP_LAUNCH"`)
+
+* `APP_ENHANCEMENTS` (value: `"APP_ENHANCEMENTS"`)
+
+* `NEW_CONTENT` (value: `"NEW_CONTENT"`)
+
+
+
+
+
+## Enum: StateEnum
+
+
+* `DRAFT` (value: `"DRAFT"`)
+
+* `SUBMITTED` (value: `"SUBMITTED"`)
+
+* `ARCHIVED` (value: `"ARCHIVED"`)
+
+
+
+

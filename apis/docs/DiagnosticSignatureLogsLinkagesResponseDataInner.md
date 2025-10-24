@@ -1,0 +1,19 @@
+# AppStoreConnectApi.DiagnosticSignatureLogsLinkagesResponseDataInner
+
+## Properties
+
+Name | Type | Description | Notes
+------------ | ------------- | ------------- | -------------
+**type** | **String** |  | 
+**id** | **String** |  | 
+
+
+
+## Enum: TypeEnum
+
+
+* `diagnosticLogs` (value: `"diagnosticLogs"`)
+
+
+
+
