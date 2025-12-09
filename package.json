@@ -8,7 +8,9 @@
     "dev": "nodemon server.js",
     "test": "jest",
     "test:watch": "jest --watch",
-    "debug-auth": "node debug-auth.js"
+    "debug-auth": "node debug-auth.js",
+    "get-apps": "node get-all-apps.js",
+    "get-product-ids": "node get-subscription-product-ids.js"
   },
   "keywords": [
     "apple",
@@ -30,6 +32,7 @@
     "helmet": "^7.1.0",
     "joi": "^17.11.0",
     "jsonwebtoken": "^9.0.2",
+    "sqlite3": "^5.1.7",
     "winston": "^3.11.0"
   },
   "devDependencies": {

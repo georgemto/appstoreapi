@@ -8,14 +8,14 @@ class AppController {
    * GET /api/apps
    */
   getAllApps = handleAsyncError(async (req, res) => {
-    // empty string need to be "" for apple to respond 
-    const options = {
-      bundleId: req.query.bundleId ?? "" ,
-      name: req.query.name ?? "" ,
-      platform: req.query.platform ?? "" ,
-      includes: req.query.includes ?? "" ,
-      limit: req.query.limit ?? 2
-    };
+    // Build options, only include non-empty values
+    const options = {};
+    
+    if (req.query.bundleId) options.bundleId = req.query.bundleId;
+    if (req.query.name) options.name = req.query.name;
+    if (req.query.platform) options.platform = req.query.platform;
+    if (req.query.includes) options.includes = req.query.includes;
+    if (req.query.limit) options.limit = parseInt(req.query.limit);
 
     const result = await appService.getAllApps(options);
 
@@ -78,6 +78,34 @@ class AppController {
       data: result.data,
       included: result.included,
       meta: result.meta
+    });
+  });
+
+  /**
+   * Get subscription product IDs for an app by bundle ID
+   * GET /api/apps/bundle/:bundleId/subscription-product-ids
+   */
+  getSubscriptionProductIdsByBundleId = handleAsyncError(async (req, res) => {
+    const { bundleId } = req.params;
+    const useCache = req.query.useCache !== 'false'; // Default true
+    const saveToDb = req.query.saveToDb !== 'false'; // Default true
+
+    const result = await appService.getSubscriptionProductIdsByBundleId(bundleId, {
+      useCache,
+      saveToDb
+    });
+
+    res.status(200).json({
+      success: true,
+      bundleId: bundleId,
+      appId: result.appId,
+      appName: result.appName,
+      productIds: result.productIds,
+      subscriptions: result.subscriptions,
+      subscriptionGroups: result.subscriptionGroups,
+      count: result.productIds.length,
+      cached: !!result.updatedAt,
+      updatedAt: result.updatedAt
     });
   });
 

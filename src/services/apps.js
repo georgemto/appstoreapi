@@ -17,8 +17,8 @@ class AppService {
         bundleId,
         name,
         platform,
-        includes = ['appStoreVersions', 'preReleaseVersions'],
-        limit = 200
+        includes,
+        limit = 50
       } = options;
 
       const filters = {};
@@ -26,14 +26,25 @@ class AppService {
       if (name) filters.name = name;
       if (platform) filters.platform = platform;
 
+      // Only include specific fields if we have includes, otherwise keep it simple
+      const includeArray = includes ? (Array.isArray(includes) ? includes : includes.split(',')) : [];
+      
+      const fields = {
+        apps: ['name', 'bundleId', 'sku', 'primaryLocale', 'isOrEverWasMadeForKids']
+      };
+      
+      // Only add fields for included resources
+      if (includeArray.includes('appStoreVersions')) {
+        fields.appStoreVersions = ['versionString', 'appStoreState', 'platform'];
+      }
+      if (includeArray.includes('preReleaseVersions')) {
+        fields.preReleaseVersions = ['version', 'platform'];
+      }
+
       const params = appStoreClient.buildParams(
         filters,
-        includes,
-        {
-          apps: ['name', 'bundleId', 'sku', 'primaryLocale', 'isOrEverWasMadeForKids'],
-          appStoreVersions: ['versionString', 'appStoreState', 'platform'],
-          preReleaseVersions: ['version', 'platform']
-        },
+        includeArray,
+        fields,
         'name',
         limit
       );
@@ -261,6 +272,120 @@ class AppService {
       return response;
     } catch (error) {
       logger.error(`Failed to search apps with query "${searchQuery}":`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all subscription product IDs for an app by bundle ID
+   */
+  async getSubscriptionProductIdsByBundleId(bundleId, options = {}) {
+    try {
+      if (!bundleId) {
+        throw new ValidationError('Bundle ID is required');
+      }
+
+      const { useCache = true, saveToDb = true } = options;
+
+      // Try to get from database first if cache is enabled
+      if (useCache) {
+        const subscriptionDb = require('./subscription-database');
+        const cachedData = await subscriptionDb.getSubscriptionDataByBundleId(bundleId);
+        
+        if (cachedData) {
+          logger.info(`Retrieved subscription data from database cache for "${bundleId}"`, {
+            subscriptions: cachedData.subscriptions.length,
+            updatedAt: cachedData.updatedAt
+          });
+          return cachedData;
+        }
+      }
+
+      // Fetch from Apple API
+      logger.info(`Fetching subscription data from Apple API for "${bundleId}"`);
+
+      // First, get the app by bundle ID
+      const appResponse = await this.getAllApps({
+        bundleId: bundleId,
+        limit: 1
+      });
+
+      if (!appResponse.data || appResponse.data.length === 0) {
+        throw new NotFoundError(`App with bundle ID "${bundleId}" not found`);
+      }
+
+      const app = appResponse.data[0];
+      const appId = app.id;
+      const appName = app.attributes?.name;
+
+      // Get subscription groups through the app's relationship endpoint
+      const params = appStoreClient.buildParams(
+        {},
+        ['subscriptions'],
+        {
+          subscriptionGroups: ['referenceName'],
+          subscriptions: ['name', 'productId', 'state', 'subscriptionPeriod', 'familySharable', 'reviewNote']
+        },
+        null,
+        100
+      );
+
+      const groupsResponse = await appStoreClient.get(`/apps/${appId}/subscriptionGroups`, params);
+
+      // Extract all subscriptions from included resources
+      const allSubscriptions = [];
+      const productIds = [];
+      
+      if (groupsResponse.included) {
+        groupsResponse.included.forEach(item => {
+          if (item.type === 'subscriptions') {
+            const productId = item.attributes?.productId;
+            if (productId) {
+              productIds.push(productId);
+              allSubscriptions.push({
+                id: item.id,
+                productId: productId,
+                name: item.attributes?.name,
+                state: item.attributes?.state,
+                subscriptionPeriod: item.attributes?.subscriptionPeriod,
+                familySharable: item.attributes?.familySharable,
+                reviewNote: item.attributes?.reviewNote
+              });
+            }
+          }
+        });
+      }
+
+      // Also include subscription groups information
+      const subscriptionGroups = (groupsResponse.data || []).map(group => ({
+        id: group.id,
+        referenceName: group.attributes?.referenceName
+      }));
+
+      const result = {
+        appId,
+        appName,
+        productIds,
+        subscriptions: allSubscriptions,
+        subscriptionGroups
+      };
+
+      logger.info(`Retrieved ${productIds.length} subscription product IDs from API for "${bundleId}"`);
+
+      // Save to database if enabled
+      if (saveToDb) {
+        try {
+          const subscriptionDb = require('./subscription-database');
+          await subscriptionDb.saveSubscriptionData(bundleId, result);
+        } catch (dbError) {
+          logger.error(`Failed to save to database for "${bundleId}":`, dbError);
+          // Don't fail the request if database save fails
+        }
+      }
+
+      return result;
+    } catch (error) {
+      logger.error(`Failed to get subscription product IDs for bundle ID "${bundleId}":`, error);
       throw error;
     }
   }

@@ -60,6 +60,15 @@ const searchQuerySchema = Joi.object({
 });
 
 /**
+ * @route   GET /api/apps/bundle/:bundleId/subscription-product-ids
+ * @desc    Get subscription product IDs by bundle ID
+ * @access  Public
+ */
+router.get('/bundle/:bundleId/subscription-product-ids',
+  appController.getSubscriptionProductIdsByBundleId
+);
+
+/**
  * @route   GET /api/apps/search
  * @desc    Search apps by bundle ID or name
  * @access  Public

@@ -22,7 +22,7 @@ class AppStoreConnectClient {
           method,
           url: `${this.baseURL}${endpoint}`,
           headers,
-          timeout: 30000, // 30 seconds
+          timeout: 60000, // 60 seconds
         };
 
         if (data) {
