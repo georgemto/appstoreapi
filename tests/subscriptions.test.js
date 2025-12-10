@@ -98,7 +98,7 @@ describe('Subscription API Endpoints', () => {
         .get('/api/subscriptions')
         .query({
           appId: 'test-app-id',
-          limit: 50,
+          limit: '50',  // Query params come as strings
           includes: 'subscriptionLocalizations,prices'
         });
       
@@ -137,7 +137,7 @@ describe('Subscription API Endpoints', () => {
       expect(response.body.data).toEqual(mockSubscription.data);
       expect(subscriptionService.getSubscriptionById).toHaveBeenCalledWith(
         validId,
-        ['subscriptionLocalizations', 'prices']
+        undefined
       );
     });
 

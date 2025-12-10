@@ -53,9 +53,9 @@ router.get('/groups',
  * @access  Public
  */
 router.get('/',
+  validateIncludes(subscriptionIncludes),  // Must run first to convert string to array
   validate(subscriptionQuerySchema, 'query'),
   validatePagination,
-  validateIncludes(subscriptionIncludes),
   subscriptionController.getAllSubscriptions
 );
 
@@ -120,6 +120,16 @@ router.put('/:id/pricing',
   validateSubscriptionId,
   validate(pricingUpdateSchema),
   subscriptionController.updateSubscriptionPricing
+);
+
+/**
+ * @route   GET /api/subscriptions/:id/promotional-offers
+ * @desc    Get all promotional offers for a subscription
+ * @access  Public
+ */
+router.get('/:id/promotional-offers',
+  validateSubscriptionId,
+  require('../controllers/promotional-offers').getPromotionalOffersForSubscription
 );
 
 module.exports = router;

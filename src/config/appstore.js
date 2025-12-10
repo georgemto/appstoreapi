@@ -15,6 +15,7 @@ const config = {
     subscriptions: '/subscriptions',
     subscriptionGroups: '/subscriptionGroups',
     subscriptionPrices: '/subscriptionPrices',
+    subscriptionPromotionalOffers: '/subscriptionPromotionalOffers',
     apps: '/apps',
     inAppPurchases: '/inAppPurchases'
   },

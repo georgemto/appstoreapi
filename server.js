@@ -17,6 +17,7 @@ const {
 
 // Import routes
 const subscriptionRoutes = require('./src/routes/subscriptions');
+const promotionalOffersRoutes = require('./src/routes/promotional-offers');
 const appRoutes = require('./src/routes/apps');
 const buildsRoutes = require('./src/routes/builds');
 const certificatesRoutes = require('./src/routes/certificates');
@@ -94,6 +95,25 @@ app.use('/api/subscriptions',
     next();
   },
   subscriptionRoutes
+);
+
+// Promotional offers routes
+app.use('/api/promotional-offers',
+  // Apply write limiter to POST, PUT, DELETE operations
+  (req, res, next) => {
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+      if (req.method === 'POST' && req.path === '/bulk') {
+        // More lenient limit for bulk operations (they take longer)
+        return writeLimiter(req, res, next);
+      }
+      if (req.method === 'POST' && req.path === '/') {
+        return createLimiter(req, res, next);
+      }
+      return writeLimiter(req, res, next);
+    }
+    next();
+  },
+  promotionalOffersRoutes
 );
 
 // App management routes
@@ -184,38 +204,40 @@ const initializeApp = async () => {
   }
 };
 
-// Start server
-const server = app.listen(PORT, async () => {
-  await initializeApp();
-  
-  logger.info(`Server running on port ${PORT}`, {
-    environment: process.env.NODE_ENV || 'development',
-    port: PORT,
-    nodeVersion: process.version
-  });
-  
-  console.log(`
+// Only start server if not in test mode
+if (process.env.NODE_ENV !== 'test') {
+  const server = app.listen(PORT, async () => {
+    await initializeApp();
+    
+    logger.info(`Server running on port ${PORT}`, {
+      environment: process.env.NODE_ENV || 'development',
+      port: PORT,
+      nodeVersion: process.version
+    });
+    
+    console.log(`
 🚀 App Store Connect API Service
 📍 Server: http://localhost:${PORT}
 🔍 Health: http://localhost:${PORT}/health
 📚 Subscriptions: http://localhost:${PORT}/api/subscriptions
 🌍 Environment: ${process.env.NODE_ENV || 'development'}
-  `);
-});
+    `);
+  });
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  process.exit(1);
-});
+  // Handle uncaught exceptions
+  process.on('uncaughtException', (error) => {
+    logger.error('Uncaught Exception:', error);
+    process.exit(1);
+  });
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
-});
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    process.exit(1);
+  });
 
-// Handle shutdown signals
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  // Handle shutdown signals
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+}
 
 module.exports = app;

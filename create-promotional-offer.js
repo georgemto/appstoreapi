@@ -1,0 +1,176 @@
+require('dotenv').config();
+const promotionalOfferService = require('./src/services/promotional-offers');
+const logger = require('./src/utils/logger');
+
+/**
+ * Script to create a promotional offer for a subscription
+ * Usage: npm run create-promo-offer <subscription-id> [options]
+ */
+async function createPromotionalOffer() {
+  try {
+    // Parse command line arguments
+    const args = process.argv.slice(2);
+    
+    if (args.includes('--help') || args.includes('-h') || args.length === 0) {
+      showHelp();
+      process.exit(0);
+    }
+
+    const subscriptionId = args[0];
+    
+    if (!subscriptionId) {
+      console.error('❌ Error: Subscription ID is required\n');
+      showHelp();
+      process.exit(1);
+    }
+
+    // Parse options
+    const name = getArgValue(args, '--name') || 'Special Promotional Offer';
+    const offerCode = getArgValue(args, '--code');
+    const offerCodePrefix = getArgValue(args, '--prefix');
+    const duration = getArgValue(args, '--duration') || 'ONE_MONTH';
+    const offerMode = getArgValue(args, '--mode') || 'PAY_AS_YOU_GO';
+    const numberOfPeriods = parseInt(getArgValue(args, '--periods') || '3');
+
+    console.log('🎁 Creating promotional offer...\n');
+    console.log('─'.repeat(80));
+    console.log(`Subscription ID: ${subscriptionId}`);
+    console.log(`Offer Name: ${name}`);
+    console.log(`Offer Code: ${offerCode || 'Auto-generated'}`);
+    if (offerCodePrefix) console.log(`Offer Code Prefix: ${offerCodePrefix}`);
+    console.log(`Duration: ${duration}`);
+    console.log(`Offer Mode: ${offerMode}`);
+    console.log(`Number of Periods: ${numberOfPeriods}`);
+    console.log('─'.repeat(80));
+    console.log();
+
+    // Create promotional offer
+    const offerData = {
+      name,
+      duration,
+      offerMode,
+      numberOfPeriods
+    };
+
+    if (offerCode) {
+      offerData.offerCode = offerCode;
+    } else if (offerCodePrefix) {
+      offerData.offerCodePrefix = offerCodePrefix;
+    }
+
+    const result = await promotionalOfferService.createPromotionalOffer(subscriptionId, offerData);
+
+    console.log('✅ Successfully created promotional offer!\n');
+    console.log('─'.repeat(80));
+    console.log(`Offer ID: ${result.data.id}`);
+    console.log(`Offer Name: ${result.data.attributes.name}`);
+    console.log(`Offer Code: ${result.data.attributes.offerCode}`);
+    console.log(`Duration: ${result.data.attributes.duration}`);
+    console.log(`Offer Mode: ${result.data.attributes.offerMode}`);
+    console.log(`Number of Periods: ${result.data.attributes.numberOfPeriods}`);
+    console.log('─'.repeat(80));
+
+    // Save to file
+    const fs = require('fs');
+    const outputData = {
+      offerId: result.data.id,
+      subscriptionId: subscriptionId,
+      offer: result.data.attributes,
+      createdAt: new Date().toISOString()
+    };
+
+    const outputPath = `./promotional-offer-${result.data.attributes.offerCode}.json`;
+    fs.writeFileSync(outputPath, JSON.stringify(outputData, null, 2));
+    console.log(`\n💾 Offer details saved to: ${outputPath}`);
+
+  } catch (error) {
+    console.error('\n❌ Error:', error.message);
+
+    if (error.statusCode === 401) {
+      console.error('\n🔐 Authentication Error:');
+      console.error('   Please check your App Store Connect API credentials in .env file');
+    } else if (error.statusCode === 403) {
+      console.error('\n🚫 Authorization Error:');
+      console.error('   Your API key does not have permission to create promotional offers');
+    } else if (error.statusCode === 404 || error.message.includes('not found')) {
+      console.error('\n🔍 Not Found:');
+      console.error(`   Subscription with ID "${args[0]}" not found`);
+    } else if (error.message.includes('already exists')) {
+      console.error('\n⚠️  Duplicate Error:');
+      console.error('   A promotional offer with this name or code already exists for this subscription');
+    } else if (error.message.includes('validation') || error.message.includes('invalid')) {
+      console.error('\n⚠️  Validation Error:');
+      console.error('   Please check your input parameters');
+    }
+
+    logger.error('Failed to create promotional offer', {
+      error: error.message,
+      stack: error.stack
+    });
+    process.exit(1);
+  }
+}
+
+function getArgValue(args, flag) {
+  const index = args.indexOf(flag);
+  if (index !== -1 && index + 1 < args.length) {
+    return args[index + 1];
+  }
+  return null;
+}
+
+function showHelp() {
+  console.log(`
+🎁 Create Promotional Offer
+
+Creates a promotional offer for a specific subscription.
+
+Usage:
+  npm run create-promo-offer <subscription-id> [options]
+
+Arguments:
+  subscription-id     The UUID of the subscription
+
+Options:
+  --name <name>       Offer name (default: "Special Promotional Offer")
+  --code <code>       Custom offer code (3-25 uppercase alphanumeric)
+  --prefix <prefix>   Offer code prefix for auto-generation
+  --duration <dur>    Duration: THREE_DAYS, ONE_WEEK, TWO_WEEKS, ONE_MONTH,
+                      TWO_MONTHS, THREE_MONTHS, SIX_MONTHS, ONE_YEAR
+                      (default: ONE_MONTH)
+  --mode <mode>       Offer mode: PAY_AS_YOU_GO, PAY_UP_FRONT, FREE_TRIAL
+                      (default: PAY_AS_YOU_GO)
+  --periods <num>     Number of periods (1-12, default: 3)
+  --help, -h          Show this help message
+
+Examples:
+  # Create with auto-generated code
+  npm run create-promo-offer abc123-def456-ghi789
+
+  # Create with custom name and duration
+  npm run create-promo-offer abc123-def456-ghi789 --name "Spring Sale" --duration ONE_MONTH
+
+  # Create with custom offer code
+  npm run create-promo-offer abc123-def456-ghi789 --name "Summer Sale" --code SUMMER2024
+
+  # Create a free trial offer
+  npm run create-promo-offer abc123-def456-ghi789 --name "Free Trial" --mode FREE_TRIAL --periods 1 --duration ONE_WEEK
+
+  # Create with custom prefix for auto-generated code
+  npm run create-promo-offer abc123-def456-ghi789 --name "Black Friday" --prefix BLACKFRI
+
+Notes:
+  - If neither --code nor --prefix is provided, a random code will be generated
+  - Offer codes must be unique per subscription
+  - Offer names must be unique per subscription
+  - The generated code follows format: PREFIX-TIMESTAMP-RANDOM
+
+Related Commands:
+  npm run get-product-ids <bundle-id>     # Get subscription IDs for a bundle ID
+  npm run get-promo-offers <bundle-id>    # List all promotional offers
+  npm run bulk-create-promo               # Bulk create offers
+  `);
+}
+
+// Run the script
+createPromotionalOffer();

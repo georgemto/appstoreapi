@@ -332,7 +332,31 @@ class AppService {
 
       const groupsResponse = await appStoreClient.get(`/apps/${appId}/subscriptionGroups`, params);
 
-      // Extract all subscriptions from included resources
+      // Extract subscriptions from included array and track their group membership
+      // by querying each group's subscriptions endpoint
+      const subscriptionToGroupMap = {};
+      
+      // Get subscriptions for each group to build the mapping
+      for (const group of (groupsResponse.data || [])) {
+        try {
+          const groupSubsResponse = await appStoreClient.get(
+            `/subscriptionGroups/${group.id}/subscriptions`,
+            {
+              'fields[subscriptions]': 'productId',
+              limit: 200
+            }
+          );
+          
+          // Map each subscription to this group
+          (groupSubsResponse.data || []).forEach(sub => {
+            subscriptionToGroupMap[sub.id] = group.id;
+          });
+        } catch (error) {
+          logger.warn(`Failed to get subscriptions for group ${group.id}:`, error.message);
+        }
+      }
+
+      // Extract all subscriptions from included resources with group relationships
       const allSubscriptions = [];
       const productIds = [];
       
@@ -349,7 +373,8 @@ class AppService {
                 state: item.attributes?.state,
                 subscriptionPeriod: item.attributes?.subscriptionPeriod,
                 familySharable: item.attributes?.familySharable,
-                reviewNote: item.attributes?.reviewNote
+                reviewNote: item.attributes?.reviewNote,
+                groupId: subscriptionToGroupMap[item.id] || null
               });
             }
           }

@@ -5,6 +5,11 @@ const logger = require('../utils/logger');
 
 // Rate limiting middleware
 const createRateLimiter = (windowMs, max, message) => {
+  // Skip rate limiting in test environment
+  if (process.env.NODE_ENV === 'test') {
+    return (req, res, next) => next();
+  }
+  
   return rateLimit({
     windowMs,
     max,

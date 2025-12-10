@@ -1,4 +1,4 @@
-const { ApiClient, AppsApi, BuildsApi, CertificatesApi, DevicesApi, ProfilesApi, BundleIdsApi, BetaGroupsApi, BetaTestersApi, AppStoreVersionsApi } = require('app_store_connect_api');
+const { ApiClient, AppsApi, BuildsApi, CertificatesApi, DevicesApi, ProfilesApi, BundleIdsApi, BetaGroupsApi, BetaTestersApi, AppStoreVersionsApi, SubscriptionPromotionalOffersApi } = require('app_store_connect_api');
 const authService = require('./auth');
 const logger = require('../utils/logger');
 const { config } = require('../config/appstore');
@@ -10,7 +10,8 @@ const { config } = require('../config/appstore');
 class AppStoreConnectAPIClient {
   constructor() {
     this.apiClient = new ApiClient();
-    this.apiClient.basePath = config.apiBaseUrl;
+    // Remove /v1 from base path as generated API already includes it in routes
+    this.apiClient.basePath = config.apiBaseUrl.replace(/\/v1$/, '');
     
     // Initialize API instances
     this.appsApi = new AppsApi(this.apiClient);
@@ -22,6 +23,7 @@ class AppStoreConnectAPIClient {
     this.betaGroupsApi = new BetaGroupsApi(this.apiClient);
     this.betaTestersApi = new BetaTestersApi(this.apiClient);
     this.appStoreVersionsApi = new AppStoreVersionsApi(this.apiClient);
+    this.subscriptionPromotionalOffersApi = new SubscriptionPromotionalOffersApi(this.apiClient);
   }
 
   /**
@@ -55,12 +57,23 @@ class AppStoreConnectAPIClient {
 
   /**
    * Execute API call with error handling and logging
+   * Wraps callback-based API calls to return promises
    */
   async executeApiCall(apiCall, operationName, params = {}) {
     try {
       logger.info(`Executing ${operationName}`, { params });
       
-      const result = await apiCall();
+      // Wrap callback-based API call in a promise
+      const result = await new Promise((resolve, reject) => {
+        const request = apiCall((error, data, response) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(data);
+          }
+        });
+        // Don't call .then() on the request object
+      });
       
       logger.info(`${operationName} completed successfully`, {
         resultType: typeof result,
@@ -86,7 +99,7 @@ class AppStoreConnectAPIClient {
   // Apps API methods
   async listApps(opts = {}) {
     return this.executeApiCall(
-      () => this.appsApi.appsGetCollection(opts),
+      (callback) => this.appsApi.appsGetCollection(opts, callback),
       'listApps',
       opts
     );
@@ -94,7 +107,7 @@ class AppStoreConnectAPIClient {
 
   async getApp(id, opts = {}) {
     return this.executeApiCall(
-      () => this.appsApi.appsGetInstance(id, opts),
+      (callback) => this.appsApi.appsGetInstance(id, opts, callback),
       'getApp',
       { id, ...opts }
     );
@@ -103,7 +116,7 @@ class AppStoreConnectAPIClient {
   // Builds API methods
   async listBuilds(opts = {}) {
     return this.executeApiCall(
-      () => this.buildsApi.buildsGetCollection(opts),
+      (callback) => this.buildsApi.buildsGetCollection(opts, callback),
       'listBuilds',
       opts
     );
@@ -111,7 +124,7 @@ class AppStoreConnectAPIClient {
 
   async getBuild(id, opts = {}) {
     return this.executeApiCall(
-      () => this.buildsApi.buildsGetInstance(id, opts),
+      (callback) => this.buildsApi.buildsGetInstance(id, opts, callback),
       'getBuild',
       { id, ...opts }
     );
@@ -119,7 +132,7 @@ class AppStoreConnectAPIClient {
 
   async updateBuild(id, buildUpdateRequest) {
     return this.executeApiCall(
-      () => this.buildsApi.buildsUpdateInstance(id, buildUpdateRequest),
+      (callback) => this.buildsApi.buildsUpdateInstance(id, buildUpdateRequest, callback),
       'updateBuild',
       { id, buildUpdateRequest }
     );
@@ -128,7 +141,7 @@ class AppStoreConnectAPIClient {
   // Certificates API methods
   async listCertificates(opts = {}) {
     return this.executeApiCall(
-      () => this.certificatesApi.certificatesGetCollection(opts),
+      (callback) => this.certificatesApi.certificatesGetCollection(opts, callback),
       'listCertificates',
       opts
     );
@@ -136,7 +149,7 @@ class AppStoreConnectAPIClient {
 
   async createCertificate(certificateCreateRequest) {
     return this.executeApiCall(
-      () => this.certificatesApi.certificatesCreateInstance(certificateCreateRequest),
+      (callback) => this.certificatesApi.certificatesCreateInstance(certificateCreateRequest, callback),
       'createCertificate',
       { certificateCreateRequest }
     );
@@ -144,7 +157,7 @@ class AppStoreConnectAPIClient {
 
   async getCertificate(id, opts = {}) {
     return this.executeApiCall(
-      () => this.certificatesApi.certificatesGetInstance(id, opts),
+      (callback) => this.certificatesApi.certificatesGetInstance(id, opts, callback),
       'getCertificate',
       { id, ...opts }
     );
@@ -152,7 +165,7 @@ class AppStoreConnectAPIClient {
 
   async deleteCertificate(id) {
     return this.executeApiCall(
-      () => this.certificatesApi.certificatesDeleteInstance(id),
+      (callback) => this.certificatesApi.certificatesDeleteInstance(id, callback),
       'deleteCertificate',
       { id }
     );
@@ -161,7 +174,7 @@ class AppStoreConnectAPIClient {
   // Devices API methods
   async listDevices(opts = {}) {
     return this.executeApiCall(
-      () => this.devicesApi.devicesGetCollection(opts),
+      (callback) => this.devicesApi.devicesGetCollection(opts, callback),
       'listDevices',
       opts
     );
@@ -169,7 +182,7 @@ class AppStoreConnectAPIClient {
 
   async createDevice(deviceCreateRequest) {
     return this.executeApiCall(
-      () => this.devicesApi.devicesCreateInstance(deviceCreateRequest),
+      (callback) => this.devicesApi.devicesCreateInstance(deviceCreateRequest, callback),
       'createDevice',
       { deviceCreateRequest }
     );
@@ -177,7 +190,7 @@ class AppStoreConnectAPIClient {
 
   async getDevice(id, opts = {}) {
     return this.executeApiCall(
-      () => this.devicesApi.devicesGetInstance(id, opts),
+      (callback) => this.devicesApi.devicesGetInstance(id, opts, callback),
       'getDevice',
       { id, ...opts }
     );
@@ -185,7 +198,7 @@ class AppStoreConnectAPIClient {
 
   async updateDevice(id, deviceUpdateRequest) {
     return this.executeApiCall(
-      () => this.devicesApi.devicesUpdateInstance(id, deviceUpdateRequest),
+      (callback) => this.devicesApi.devicesUpdateInstance(id, deviceUpdateRequest, callback),
       'updateDevice',
       { id, deviceUpdateRequest }
     );
@@ -194,7 +207,7 @@ class AppStoreConnectAPIClient {
   // Profiles API methods
   async listProfiles(opts = {}) {
     return this.executeApiCall(
-      () => this.profilesApi.profilesGetCollection(opts),
+      (callback) => this.profilesApi.profilesGetCollection(opts, callback),
       'listProfiles',
       opts
     );
@@ -202,7 +215,7 @@ class AppStoreConnectAPIClient {
 
   async createProfile(profileCreateRequest) {
     return this.executeApiCall(
-      () => this.profilesApi.profilesCreateInstance(profileCreateRequest),
+      (callback) => this.profilesApi.profilesCreateInstance(profileCreateRequest, callback),
       'createProfile',
       { profileCreateRequest }
     );
@@ -210,7 +223,7 @@ class AppStoreConnectAPIClient {
 
   async getProfile(id, opts = {}) {
     return this.executeApiCall(
-      () => this.profilesApi.profilesGetInstance(id, opts),
+      (callback) => this.profilesApi.profilesGetInstance(id, opts, callback),
       'getProfile',
       { id, ...opts }
     );
@@ -218,7 +231,7 @@ class AppStoreConnectAPIClient {
 
   async deleteProfile(id) {
     return this.executeApiCall(
-      () => this.profilesApi.profilesDeleteInstance(id),
+      (callback) => this.profilesApi.profilesDeleteInstance(id, callback),
       'deleteProfile',
       { id }
     );
@@ -227,7 +240,7 @@ class AppStoreConnectAPIClient {
   // Bundle IDs API methods
   async listBundleIds(opts = {}) {
     return this.executeApiCall(
-      () => this.bundleIdsApi.bundleIdsGetCollection(opts),
+      (callback) => this.bundleIdsApi.bundleIdsGetCollection(opts, callback),
       'listBundleIds',
       opts
     );
@@ -235,7 +248,7 @@ class AppStoreConnectAPIClient {
 
   async createBundleId(bundleIdCreateRequest) {
     return this.executeApiCall(
-      () => this.bundleIdsApi.bundleIdsCreateInstance(bundleIdCreateRequest),
+      (callback) => this.bundleIdsApi.bundleIdsCreateInstance(bundleIdCreateRequest, callback),
       'createBundleId',
       { bundleIdCreateRequest }
     );
@@ -243,7 +256,7 @@ class AppStoreConnectAPIClient {
 
   async getBundleId(id, opts = {}) {
     return this.executeApiCall(
-      () => this.bundleIdsApi.bundleIdsGetInstance(id, opts),
+      (callback) => this.bundleIdsApi.bundleIdsGetInstance(id, opts, callback),
       'getBundleId',
       { id, ...opts }
     );
@@ -251,7 +264,7 @@ class AppStoreConnectAPIClient {
 
   async updateBundleId(id, bundleIdUpdateRequest) {
     return this.executeApiCall(
-      () => this.bundleIdsApi.bundleIdsUpdateInstance(id, bundleIdUpdateRequest),
+      (callback) => this.bundleIdsApi.bundleIdsUpdateInstance(id, bundleIdUpdateRequest, callback),
       'updateBundleId',
       { id, bundleIdUpdateRequest }
     );
@@ -259,7 +272,7 @@ class AppStoreConnectAPIClient {
 
   async deleteBundleId(id) {
     return this.executeApiCall(
-      () => this.bundleIdsApi.bundleIdsDeleteInstance(id),
+      (callback) => this.bundleIdsApi.bundleIdsDeleteInstance(id, callback),
       'deleteBundleId',
       { id }
     );
@@ -268,7 +281,7 @@ class AppStoreConnectAPIClient {
   // Beta Groups API methods
   async listBetaGroups(opts = {}) {
     return this.executeApiCall(
-      () => this.betaGroupsApi.betaGroupsGetCollection(opts),
+      (callback) => this.betaGroupsApi.betaGroupsGetCollection(opts, callback),
       'listBetaGroups',
       opts
     );
@@ -276,7 +289,7 @@ class AppStoreConnectAPIClient {
 
   async createBetaGroup(betaGroupCreateRequest) {
     return this.executeApiCall(
-      () => this.betaGroupsApi.betaGroupsCreateInstance(betaGroupCreateRequest),
+      (callback) => this.betaGroupsApi.betaGroupsCreateInstance(betaGroupCreateRequest, callback),
       'createBetaGroup',
       { betaGroupCreateRequest }
     );
@@ -284,7 +297,7 @@ class AppStoreConnectAPIClient {
 
   async getBetaGroup(id, opts = {}) {
     return this.executeApiCall(
-      () => this.betaGroupsApi.betaGroupsGetInstance(id, opts),
+      (callback) => this.betaGroupsApi.betaGroupsGetInstance(id, opts, callback),
       'getBetaGroup',
       { id, ...opts }
     );
@@ -292,7 +305,7 @@ class AppStoreConnectAPIClient {
 
   async updateBetaGroup(id, betaGroupUpdateRequest) {
     return this.executeApiCall(
-      () => this.betaGroupsApi.betaGroupsUpdateInstance(id, betaGroupUpdateRequest),
+      (callback) => this.betaGroupsApi.betaGroupsUpdateInstance(id, betaGroupUpdateRequest, callback),
       'updateBetaGroup',
       { id, betaGroupUpdateRequest }
     );
@@ -300,7 +313,7 @@ class AppStoreConnectAPIClient {
 
   async deleteBetaGroup(id) {
     return this.executeApiCall(
-      () => this.betaGroupsApi.betaGroupsDeleteInstance(id),
+      (callback) => this.betaGroupsApi.betaGroupsDeleteInstance(id, callback),
       'deleteBetaGroup',
       { id }
     );
@@ -309,7 +322,7 @@ class AppStoreConnectAPIClient {
   // Beta Testers API methods
   async listBetaTesters(opts = {}) {
     return this.executeApiCall(
-      () => this.betaTestersApi.betaTestersGetCollection(opts),
+      (callback) => this.betaTestersApi.betaTestersGetCollection(opts, callback),
       'listBetaTesters',
       opts
     );
@@ -317,7 +330,7 @@ class AppStoreConnectAPIClient {
 
   async createBetaTester(betaTesterCreateRequest) {
     return this.executeApiCall(
-      () => this.betaTestersApi.betaTestersCreateInstance(betaTesterCreateRequest),
+      (callback) => this.betaTestersApi.betaTestersCreateInstance(betaTesterCreateRequest, callback),
       'createBetaTester',
       { betaTesterCreateRequest }
     );
@@ -325,7 +338,7 @@ class AppStoreConnectAPIClient {
 
   async getBetaTester(id, opts = {}) {
     return this.executeApiCall(
-      () => this.betaTestersApi.betaTestersGetInstance(id, opts),
+      (callback) => this.betaTestersApi.betaTestersGetInstance(id, opts, callback),
       'getBetaTester',
       { id, ...opts }
     );
@@ -333,7 +346,7 @@ class AppStoreConnectAPIClient {
 
   async deleteBetaTester(id) {
     return this.executeApiCall(
-      () => this.betaTestersApi.betaTestersDeleteInstance(id),
+      (callback) => this.betaTestersApi.betaTestersDeleteInstance(id, callback),
       'deleteBetaTester',
       { id }
     );
@@ -342,7 +355,7 @@ class AppStoreConnectAPIClient {
   // App Store Versions API methods
   async listAppStoreVersions(opts = {}) {
     return this.executeApiCall(
-      () => this.appStoreVersionsApi.appStoreVersionsGetCollection(opts),
+      (callback) => this.appStoreVersionsApi.appStoreVersionsGetCollection(opts, callback),
       'listAppStoreVersions',
       opts
     );
@@ -350,7 +363,7 @@ class AppStoreConnectAPIClient {
 
   async createAppStoreVersion(appStoreVersionCreateRequest) {
     return this.executeApiCall(
-      () => this.appStoreVersionsApi.appStoreVersionsCreateInstance(appStoreVersionCreateRequest),
+      (callback) => this.appStoreVersionsApi.appStoreVersionsCreateInstance(appStoreVersionCreateRequest, callback),
       'createAppStoreVersion',
       { appStoreVersionCreateRequest }
     );
@@ -358,7 +371,7 @@ class AppStoreConnectAPIClient {
 
   async getAppStoreVersion(id, opts = {}) {
     return this.executeApiCall(
-      () => this.appStoreVersionsApi.appStoreVersionsGetInstance(id, opts),
+      (callback) => this.appStoreVersionsApi.appStoreVersionsGetInstance(id, opts, callback),
       'getAppStoreVersion',
       { id, ...opts }
     );
@@ -366,7 +379,7 @@ class AppStoreConnectAPIClient {
 
   async updateAppStoreVersion(id, appStoreVersionUpdateRequest) {
     return this.executeApiCall(
-      () => this.appStoreVersionsApi.appStoreVersionsUpdateInstance(id, appStoreVersionUpdateRequest),
+      (callback) => this.appStoreVersionsApi.appStoreVersionsUpdateInstance(id, appStoreVersionUpdateRequest, callback),
       'updateAppStoreVersion',
       { id, appStoreVersionUpdateRequest }
     );
@@ -374,9 +387,65 @@ class AppStoreConnectAPIClient {
 
   async deleteAppStoreVersion(id) {
     return this.executeApiCall(
-      () => this.appStoreVersionsApi.appStoreVersionsDeleteInstance(id),
+      (callback) => this.appStoreVersionsApi.appStoreVersionsDeleteInstance(id, callback),
       'deleteAppStoreVersion',
       { id }
+    );
+  }
+
+  // Subscription Promotional Offers API methods
+  async createPromotionalOffer(subscriptionPromotionalOfferCreateRequest) {
+    // Use direct HTTP client to avoid deserialization issues with oneOf schemas
+    // The generated client has issues parsing promotional offer responses
+    const appStoreClient = require('./appstore-client');
+    try {
+      const response = await appStoreClient.post(
+        '/subscriptionPromotionalOffers',
+        subscriptionPromotionalOfferCreateRequest
+      );
+      logger.info('createPromotionalOffer completed successfully', {
+        offerId: response.data?.id,
+        offerCode: response.data?.attributes?.offerCode
+      });
+      return response;
+    } catch (error) {
+      logger.error('createPromotionalOffer failed', {
+        error: error.message,
+        status: error.status || error.statusCode
+      });
+      throw error;
+    }
+  }
+
+  async getPromotionalOffer(id, opts = {}) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionPromotionalOffersApi.subscriptionPromotionalOffersGetInstance(id, opts, callback),
+      'getPromotionalOffer',
+      { id, ...opts }
+    );
+  }
+
+  async updatePromotionalOffer(id, subscriptionPromotionalOfferUpdateRequest) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionPromotionalOffersApi.subscriptionPromotionalOffersUpdateInstance(id, subscriptionPromotionalOfferUpdateRequest, callback),
+      'updatePromotionalOffer',
+      { id, subscriptionPromotionalOfferUpdateRequest }
+    );
+  }
+
+  async deletePromotionalOffer(id) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionPromotionalOffersApi.subscriptionPromotionalOffersDeleteInstance(id, callback),
+      'deletePromotionalOffer',
+      { id }
+    );
+  }
+
+  async getPromotionalOfferPrices(id, opts = {}) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionPromotionalOffersApi.subscriptionPromotionalOffersPricesGetToManyRelated(id, opts, callback),
+      'getPromotionalOfferPrices',
+      { id, ...opts }
     );
   }
 }
