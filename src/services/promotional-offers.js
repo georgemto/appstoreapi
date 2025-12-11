@@ -144,46 +144,46 @@ class PromotionalOfferService {
         throw new ValidationError('Subscription ID is required');
       }
 
+      // Get subscription with price points via the prices relationship endpoint
       const params = appStoreClient.buildParams(
-        {},
-        ['pricePoints'],
+        territory ? { territory } : {},
+        ['territory', 'subscriptionPricePoint'],
         {
-          subscriptions: ['name', 'productId'],
-          subscriptionPricePoints: ['customerPrice', 'proceeds']
+          subscriptionPrices: ['startDate'],
+          subscriptionPricePoints: ['customerPrice', 'proceeds'],
+          territories: ['currency']
         },
         null,
         200
       );
 
       const response = await appStoreClient.get(
-        `${this.endpoints.subscriptions}/${subscriptionId}`,
+        `${this.endpoints.subscriptions}/${subscriptionId}/prices`,
         params
       );
 
-      if (!response.included) {
-        logger.warn(`No price points found for subscription ${subscriptionId}`);
+      if (!response.data || response.data.length === 0) {
+        logger.warn(`No prices found for subscription ${subscriptionId}`);
         return [];
       }
 
-      // Extract price points with their details
-      const pricePoints = response.included
-        .filter(item => item.type === 'subscriptionPricePoints')
-        .map(point => {
-          // Get territory from relationships
+      // Extract price points from included resources
+      const pricePoints = [];
+      
+      if (response.included) {
+        const pricePointsData = response.included.filter(item => item.type === 'subscriptionPricePoints');
+        
+        pricePointsData.forEach(point => {
           const territoryId = point.relationships?.territory?.data?.id;
           
-          return {
+          pricePoints.push({
             id: point.id,
             territory: territoryId,
             customerPrice: point.attributes?.customerPrice,
             proceeds: point.attributes?.proceeds,
             type: point.type
-          };
+          });
         });
-
-      // Filter by territory if specified
-      if (territory) {
-        return pricePoints.filter(point => point.territory === territory);
       }
 
       logger.info(`Retrieved ${pricePoints.length} price points for subscription ${subscriptionId}`);
@@ -204,40 +204,44 @@ class PromotionalOfferService {
    */
   async getSubscriptionTerritories(subscriptionId) {
     try {
-      // Get subscription with prices to extract territories
+      // Get subscription prices to extract territories
+      // Note: GET /subscriptions/{id} doesn't support 'prices' include
+      // We need to use the prices relationship endpoint instead
       const params = appStoreClient.buildParams(
         {},
-        ['prices'],
+        [],
         {
-          subscriptions: ['name'],
-          subscriptionPrices: [] // We only need the price IDs
-        }
+          subscriptionPrices: ['startDate'] // Minimal fields
+        },
+        null,
+        10 // Just need a few to determine territories
       );
 
       const response = await appStoreClient.get(
-        `${this.endpoints.subscriptions}/${subscriptionId}`,
+        `${this.endpoints.subscriptions}/${subscriptionId}/prices`,
         params
       );
 
-      // Extract unique territory codes from subscription price IDs
-      // Price IDs are base64 encoded and contain territory info
+      // Extract territories from the prices data
       const territories = [];
-      if (response.included) {
-        const prices = response.included.filter(item => item.type === 'subscriptionPrices');
-        
-        // For simplicity, we'll create prices for a subset of major territories
-        // Apple's API expects territory codes like 'USA', 'GBR', 'CAN', etc.
-        // Since we can't easily decode the price IDs, we'll use a default set
-        // This matches the pattern seen in the existing promotional offer (single territory)
-        
-        // Return at least one territory to satisfy API requirements
-        // Using 'USA' as default - you can customize based on your needs
-        if (prices.length > 0) {
-          return ['USA']; // Default to USA territory
-        }
+      
+      if (response.data && response.data.length > 0) {
+        // Get territories from the price relationships
+        response.data.forEach(price => {
+          const territoryId = price.relationships?.territory?.data?.id;
+          if (territoryId && !territories.includes(territoryId)) {
+            territories.push(territoryId);
+          }
+        });
+      }
+
+      // If we found territories, return them
+      if (territories.length > 0) {
+        return territories;
       }
 
       // Fallback to USA if no prices found
+      logger.warn(`No territories found for subscription ${subscriptionId}, defaulting to USA`);
       return ['USA'];
     } catch (error) {
       logger.warn(`Could not get subscription territories: ${error.message}`);
@@ -387,25 +391,25 @@ class PromotionalOfferService {
    */
   async checkDuplicateOfferName(subscriptionId, offerName) {
     try {
-      // Get subscription with promotional offers included
+      // Get promotional offers for the subscription via relationship endpoint
       const params = appStoreClient.buildParams(
         {},
-        ['promotionalOffers'],
+        [],
         {
-          subscriptions: ['name'],
           subscriptionPromotionalOffers: ['name', 'offerCode']
-        }
+        },
+        null,
+        100
       );
 
       const response = await appStoreClient.get(
-        `${this.endpoints.subscriptions}/${subscriptionId}`,
+        `${this.endpoints.subscriptions}/${subscriptionId}/promotionalOffers`,
         params
       );
 
       // Check if any existing promotional offers have the same name
-      if (response.included) {
-        const existingOffers = response.included.filter(item => item.type === 'subscriptionPromotionalOffers');
-        const duplicateName = existingOffers.find(offer => 
+      if (response.data && response.data.length > 0) {
+        const duplicateName = response.data.find(offer => 
           offer.attributes?.name?.toLowerCase() === offerName.toLowerCase()
         );
 

@@ -51,19 +51,25 @@ class SubscriptionService {
   /**
    * Get a specific subscription by ID
    */
-  async getSubscriptionById(subscriptionId, includes = ['subscriptionLocalizations', 'prices']) {
+  async getSubscriptionById(subscriptionId, includes = ['subscriptionLocalizations']) {
     try {
       if (!subscriptionId) {
         throw new ValidationError('Subscription ID is required');
       }
 
+      // Note: GET /subscriptions/{id} only supports limited includes
+      // Valid includes: subscriptionLocalizations, appStoreReviewScreenshot, promotionalOffers, offerCodes, prices, pricesV2, subscriptionAvailability, winBackOffers, images
+      // However, 'prices' needs to be fetched via relationship endpoint if detailed info is needed
+      const validIncludes = includes.filter(inc => 
+        ['subscriptionLocalizations', 'promotionalOffers', 'offerCodes', 'subscriptionAvailability', 'appStoreReviewScreenshot'].includes(inc)
+      );
+
       const params = appStoreClient.buildParams(
         {},
-        includes,
+        validIncludes,
         {
           subscriptions: ['name', 'productId', 'subscriptionPeriod', 'state', 'reviewNote', 'familySharable', 'subscriptionType'],
-          subscriptionLocalizations: ['name', 'description', 'locale'],
-          subscriptionPrices: ['startDate', 'endDate', 'preserveCurrentPrice']
+          subscriptionLocalizations: ['name', 'description', 'locale']
         }
       );
 
