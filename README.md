@@ -10,6 +10,8 @@ A comprehensive Node.js web service for managing Apple App Store Connect subscri
 - ✅ **Input Validation** with comprehensive error handling
 - ✅ **Logging** with Winston for debugging and monitoring
 - ✅ **Pricing Management** for subscriptions
+- ✅ **Promotional Offers** with automatic multi-territory pricing
+- ✅ **Price Tier Conversion** - create global offers with a single price point
 - ✅ **Health Checks** and service monitoring
 - ✅ **Graceful Shutdown** handling
 
@@ -99,6 +101,37 @@ npm run debug-auth
 ```
 
 This will check your configuration and help identify any issues. See `AUTHENTICATION_SETUP.md` for detailed troubleshooting.
+
+## 🌟 NEW: Multi-Territory Promotional Offers
+
+Create promotional offers for multiple countries with **automatic price tier conversion**!
+
+### Quick Example
+
+```bash
+# Get ALL available price points for a subscription (800+ tiers)
+npm run get-price-points 6746919022 USA
+
+# Create a global offer with automatic price conversion
+npm run create-promo-offer 6746919022 \
+  --name "Global Holiday Sale" \
+  --mode PAY_AS_YOU_GO \
+  --price-point <usa-price-point-id> \
+  --territories USA,GBR,CAN,AUS,EUR,JPN \
+  --duration ONE_MONTH \
+  --periods 3
+```
+
+### How It Works
+
+When you provide a USA price point (e.g., $0.99), the system automatically:
+- ✅ Extracts the price tier (e.g., tier 10010)
+- ✅ Converts to equivalent tiers for all territories
+- ✅ Creates promotional offer with consistent global pricing
+
+**Example:** Tier 10010 = $0.99 USD = £0.99 GBP = $0.99 CAD = $0.99 AUD = €0.99 EUR
+
+📖 **See full documentation:** [MULTI_TERRITORY_PRICING.md](./MULTI_TERRITORY_PRICING.md)
 
 ## API Endpoints
 

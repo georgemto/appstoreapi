@@ -15,6 +15,9 @@ module.exports = {
     'lcov',
     'html'
   ],
+  setupFiles: [
+    '<rootDir>/tests/env-setup.js'
+  ],
   setupFilesAfterEnv: [
     '<rootDir>/tests/setup.js'
   ],

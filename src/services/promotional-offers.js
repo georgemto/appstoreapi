@@ -133,7 +133,174 @@ class PromotionalOfferService {
   }
 
   /**
-   * Get subscription price points
+   * Convert a price point ID to a different territory using the same price tier
+   * Price point IDs are base64-encoded JSON: {"s":"subscriptionId","t":"territory","p":"priceTier"}
+   * This extracts the price tier and creates an equivalent price point ID for a different territory
+   * @param {string} pricePointId - Original price point ID (base64 encoded)
+   * @param {string} targetTerritory - Target territory code (e.g., 'USA', 'GBR', 'CAN')
+   * @returns {string} New price point ID for the target territory with the same price tier
+   */
+  convertPricePointToTerritory(pricePointId, targetTerritory) {
+    try {
+      // Decode the base64 price point ID
+      const decoded = Buffer.from(pricePointId, 'base64').toString('utf-8');
+      const pricePointData = JSON.parse(decoded);
+      
+      // Extract the subscription ID and price tier
+      const subscriptionId = pricePointData.s;
+      const priceTier = pricePointData.p;
+      
+      // Create new price point data with target territory
+      const newPricePointData = {
+        s: subscriptionId,
+        t: targetTerritory,
+        p: priceTier
+      };
+      
+      // Encode back to base64 (without padding, matching Apple's format)
+      const newPricePointId = Buffer.from(JSON.stringify(newPricePointData))
+        .toString('base64')
+        .replace(/=+$/, ''); // Remove trailing padding
+      
+      logger.info(`Converted price point from ${pricePointData.t} to ${targetTerritory} (tier: ${priceTier})`);
+      
+      return newPricePointId;
+    } catch (error) {
+      logger.error('Failed to convert price point to territory', {
+        pricePointId,
+        targetTerritory,
+        error: error.message
+      });
+      throw new ValidationError(
+        `Invalid price point ID format. Expected base64-encoded JSON. Error: ${error.message}`
+      );
+    }
+  }
+
+  /**
+   * Get ALL available price points for a subscription (recommended for promotional offers)
+   * This returns all Apple price tiers that can be used, not just the currently active ones.
+   * @param {string} subscriptionId - Subscription ID
+   * @param {string} territory - Optional territory filter (e.g., 'USA', 'GBR')
+   * @returns {array} Array of ALL available price point objects with id, territory, pricing info, and active status
+   */
+  async getAllAvailablePricePoints(subscriptionId, territory = null) {
+    try {
+      if (!subscriptionId) {
+        throw new ValidationError('Subscription ID is required');
+      }
+
+      // First, get currently active prices to mark them
+      const activePricePoints = await this.getSubscriptionPricePoints(subscriptionId, territory);
+      const activePricePointIds = new Set(activePricePoints.map(pp => pp.id));
+
+      // Build options for the pricePoints endpoint
+      const opts = {
+        include: ['territory'],
+        fieldsSubscriptionPricePoints: ['customerPrice', 'proceeds', 'proceedsYear2'],
+        fieldsTerritories: ['currency'],
+        limit: 200 // Maximum allowed by Apple's API
+      };
+
+      if (territory) {
+        opts.filterTerritory = [territory];
+      }
+
+      // Fetch all price points with pagination
+      const allPricePoints = [];
+      const territoryMap = {};
+      let nextUrl = null;
+      let pageCount = 0;
+      
+      do {
+        pageCount++;
+        logger.info(`Fetching price points page ${pageCount}${nextUrl ? ' (next page)' : ''}`);
+        
+        // Show progress to user in console
+        if (pageCount > 1) {
+          console.log(`   Fetching page ${pageCount}... (${allPricePoints.length} price points so far)`);
+        }
+        
+        // Use the dedicated pricePoints endpoint to get ALL available price tiers
+        const response = nextUrl 
+          ? await appStoreAPIClient.getNextPage(nextUrl)
+          : await appStoreAPIClient.getSubscriptionPricePoints(subscriptionId, opts);
+
+        if (!response.data || response.data.length === 0) {
+          if (pageCount === 1) {
+            logger.warn(`No price points found for subscription ${subscriptionId}`);
+            return [];
+          }
+          break;
+        }
+
+        // Build a map of territory IDs to territory codes from included data
+        // (kept for backwards compatibility in case some price points use relationships)
+        if (response.included) {
+          response.included.forEach(item => {
+            if (item.type === 'territories') {
+              territoryMap[item.id] = item.id;
+            }
+          });
+        }
+
+        // Add this page's price points to our collection
+        allPricePoints.push(...response.data);
+        
+        // Check if there's a next page
+        nextUrl = response.links?.next;
+        
+        logger.info(`Retrieved ${response.data.length} price points on page ${pageCount} (total so far: ${allPricePoints.length})`);
+        
+      } while (nextUrl);
+
+      logger.info(`Fetched all ${allPricePoints.length} price points across ${pageCount} page(s)`);
+
+      // Extract all price points and mark which ones are currently active
+      const pricePoints = [];
+      
+      allPricePoints.forEach(point => {
+        // Decode territory from the price point ID (which is base64 encoded JSON)
+        // Example ID: eyJzIjoiNjc0NjQ4NDA3MyIsInQiOiJBRkciLCJwIjoiMTAwMDEifQ
+        // Decodes to: {"s":"6746484073","t":"AFG","p":"10001"}
+        let territoryCode;
+        try {
+          const decoded = Buffer.from(point.id, 'base64').toString('utf-8');
+          const parsed = JSON.parse(decoded);
+          territoryCode = parsed.t; // Territory code is in the 't' field
+        } catch (e) {
+          // If decoding fails, try to get from relationships (fallback)
+          const territoryId = point.relationships?.territory?.data?.id;
+          territoryCode = territoryMap[territoryId] || territoryId;
+        }
+        
+        const isActive = activePricePointIds.has(point.id);
+        
+        pricePoints.push({
+          id: point.id,
+          territory: territoryCode,
+          customerPrice: point.attributes?.customerPrice,
+          proceeds: point.attributes?.proceeds,
+          proceedsYear2: point.attributes?.proceedsYear2,
+          type: point.type,
+          isActive: isActive
+        });
+      });
+
+      logger.info(`Retrieved ${pricePoints.length} available price points for subscription ${subscriptionId} (${activePricePointIds.size} active)`);
+      return pricePoints;
+    } catch (error) {
+      if (error.statusCode === 404 || error.status === 404) {
+        throw new NotFoundError(`Subscription with ID ${subscriptionId} not found`);
+      }
+      logger.error(`Failed to get available price points: ${error.message}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get subscription price points (returns only currently active prices)
+   * @deprecated For promotional offers, use getAllAvailablePricePoints() instead
    * @param {string} subscriptionId - Subscription ID
    * @param {string} territory - Optional territory filter (e.g., 'USA', 'GBR')
    * @returns {array} Array of price point objects with id, territory, and pricing info
@@ -300,32 +467,63 @@ class PromotionalOfferService {
         // For FREE_TRIAL offer mode, price point is not needed (it's free)
         // For PAY_AS_YOU_GO and PAY_UP_FRONT, we need to specify a price point
         if (offerData.offerMode !== 'FREE_TRIAL') {
-          // User can provide price points in two formats:
-          // 1. Single pricePointId (string) - used for all territories
+          // User can provide price points in three formats:
+          // 1. Single pricePointId (string) - automatically converted to equivalent tier for each territory
           // 2. pricePoints object mapping territories to price point IDs
+          // 3. pricePoints object with 'default' key for automatic conversion
           let pricePointId = null;
           
           if (offerData.pricePoints) {
             if (typeof offerData.pricePoints === 'string') {
-              // Single price point for all territories
-              pricePointId = offerData.pricePoints;
+              // Single price point - automatically convert to equivalent tier for this territory
+              // Extract the territory from the original price point and convert if needed
+              try {
+                const decoded = Buffer.from(offerData.pricePoints, 'base64').toString('utf-8');
+                const originalData = JSON.parse(decoded);
+                
+                if (originalData.t === territoryCode) {
+                  // Same territory, use as-is
+                  pricePointId = offerData.pricePoints;
+                  logger.info(`Using original price point for territory ${territoryCode} (tier: ${originalData.p})`);
+                } else {
+                  // Different territory, convert to equivalent tier
+                  pricePointId = this.convertPricePointToTerritory(offerData.pricePoints, territoryCode);
+                  logger.info(`Auto-converted price point from ${originalData.t} to ${territoryCode} (tier: ${originalData.p})`);
+                }
+              } catch (error) {
+                throw new ValidationError(
+                  `Invalid price point ID format. Expected base64-encoded JSON. Error: ${error.message}`
+                );
+              }
             } else if (typeof offerData.pricePoints === 'object') {
-              // Territory-specific price points
-              pricePointId = offerData.pricePoints[territoryCode];
+              // Territory-specific price points or default with auto-conversion
+              if (offerData.pricePoints[territoryCode]) {
+                // Explicit territory mapping provided
+                pricePointId = offerData.pricePoints[territoryCode];
+                logger.info(`Using explicit price point for territory ${territoryCode}`);
+              } else if (offerData.pricePoints.default) {
+                // Default price point with auto-conversion
+                pricePointId = this.convertPricePointToTerritory(offerData.pricePoints.default, territoryCode);
+                logger.info(`Auto-converted default price point to territory ${territoryCode}`);
+              }
             }
           }
           
-          if (pricePointId) {
-            priceData.relationships.subscriptionPricePoint = {
-              data: {
-                type: 'subscriptionPricePoints',
-                id: pricePointId
-              }
-            };
-            logger.info(`Using price point ${pricePointId} for territory ${territoryCode}`);
-          } else {
-            logger.warn(`No price point specified for ${offerData.offerMode} offer in territory ${territoryCode}`);
+          if (!pricePointId) {
+            // Throw an error instead of just warning - this will cause Apple's API to fail
+            throw new ValidationError(
+              `Price point is required for ${offerData.offerMode} offer mode in territory ${territoryCode}. ` +
+              `Use --price-point parameter or set offerMode to FREE_TRIAL.`
+            );
           }
+          
+          priceData.relationships.subscriptionPricePoint = {
+            data: {
+              type: 'subscriptionPricePoints',
+              id: pricePointId
+            }
+          };
+          logger.info(`Using price point ${pricePointId} for territory ${territoryCode}`);
         }
         
         return priceData;

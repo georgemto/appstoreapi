@@ -25,15 +25,16 @@ async function getPricePoints() {
       process.exit(1);
     }
 
-    console.log('📋 Fetching price points...\n');
+    console.log('📋 Fetching ALL available price points...');
+    console.log('   (This may take 5-10 seconds to fetch all pages)\n');
     console.log('─'.repeat(80));
     console.log(`Subscription ID: ${subscriptionId}`);
     if (territory) console.log(`Territory Filter: ${territory}`);
     console.log('─'.repeat(80));
-    console.log();
+    console.log('\n⏳ Fetching pages from Apple API...\n');
 
-    // Get price points
-    const pricePoints = await promotionalOfferService.getSubscriptionPricePoints(
+    // Get ALL available price points (not just active ones)
+    const pricePoints = await promotionalOfferService.getAllAvailablePricePoints(
       subscriptionId,
       territory
     );
@@ -58,30 +59,81 @@ async function getPricePoints() {
       byTerritory[pp.territory].push(pp);
     });
 
+    // Check if user wants verbose output
+    const verbose = args.includes('--verbose') || args.includes('-v');
+    
     // Display price points grouped by territory
     Object.entries(byTerritory).forEach(([territoryCode, points]) => {
-      console.log(`\n📍 Territory: ${territoryCode}`);
+      console.log(`\n📍 Territory: ${territoryCode} (${points.length} price points)`);
       console.log('─'.repeat(80));
       
-      points.forEach((pp, index) => {
-        console.log(`\n  ${index + 1}. Price Point`);
-        console.log(`     ID: ${pp.id}`);
-        console.log(`     Customer Price: ${pp.customerPrice}`);
-        console.log(`     Proceeds: ${pp.proceeds}`);
-      });
+      if (verbose) {
+        // Show all price points in verbose mode
+        points.forEach((pp, index) => {
+          const activeIndicator = pp.isActive ? ' ⭐ (ACTIVE)' : '';
+          console.log(`\n  ${index + 1}. Price Point${activeIndicator}`);
+          console.log(`     ID: ${pp.id}`);
+          console.log(`     Customer Price: ${pp.customerPrice}`);
+          console.log(`     Proceeds: ${pp.proceeds}`);
+          if (pp.proceedsYear2) {
+            console.log(`     Proceeds Year 2: ${pp.proceedsYear2}`);
+          }
+        });
+      } else {
+        // Show only active prices and first 10 in normal mode
+        const activePoints = points.filter(pp => pp.isActive);
+        const otherPoints = points.filter(pp => !pp.isActive).slice(0, 10);
+        
+        if (activePoints.length > 0) {
+          console.log('\n  ⭐ ACTIVE PRICE POINTS:');
+          activePoints.forEach((pp, index) => {
+            console.log(`\n  ${index + 1}. Active Price Point`);
+            console.log(`     ID: ${pp.id}`);
+            console.log(`     Customer Price: ${pp.customerPrice}`);
+            console.log(`     Proceeds: ${pp.proceeds}`);
+            if (pp.proceedsYear2) {
+              console.log(`     Proceeds Year 2: ${pp.proceedsYear2}`);
+            }
+          });
+        }
+        
+        if (otherPoints.length > 0) {
+          console.log('\n  📋 SAMPLE OF OTHER AVAILABLE PRICES (First 10):');
+          otherPoints.forEach((pp, index) => {
+            console.log(`\n  ${index + 1}. Price Point`);
+            console.log(`     ID: ${pp.id}`);
+            console.log(`     Customer Price: ${pp.customerPrice}`);
+            console.log(`     Proceeds: ${pp.proceeds}`);
+          });
+          
+          const remaining = points.length - activePoints.length - otherPoints.length;
+          if (remaining > 0) {
+            console.log(`\n  ... and ${remaining} more price points`);
+            console.log(`  💡 Use --verbose flag to see all ${points.length} price points`);
+          }
+        }
+      }
       
       console.log();
     });
 
     console.log('─'.repeat(80));
-    console.log(`\nTotal: ${pricePoints.length} price point(s) found`);
+    console.log(`\nTotal: ${pricePoints.length} price point(s) available`);
     console.log(`Territories: ${Object.keys(byTerritory).length}`);
+    const activeCount = pricePoints.filter(pp => pp.isActive).length;
+    console.log(`Active: ${activeCount} price point(s) currently used`);
     console.log('─'.repeat(80));
 
     console.log('\n💡 Usage Tips:');
+    console.log('   - ⭐ Marks currently active prices for this subscription');
     console.log('   - Copy a price point ID to use with --price-point parameter');
     console.log('   - Use these IDs when creating PAY_AS_YOU_GO or PAY_UP_FRONT promotional offers');
-    console.log('   - FREE_TRIAL offers do not require a price point\n');
+    console.log('   - FREE_TRIAL offers do not require a price point');
+    console.log('   - You can use ANY price point shown (not just active ones) for promotional offers');
+    if (!verbose) {
+      console.log('   - Use --verbose flag to see ALL price points instead of just a sample');
+    }
+    console.log();
 
     // Save to file
     const fs = require('fs');
@@ -107,7 +159,7 @@ async function getPricePoints() {
       console.error('   Your API key does not have permission to access this subscription');
     } else if (error.statusCode === 404 || error.message.includes('not found')) {
       console.error('\n🔍 Not Found:');
-      console.error(`   Subscription with ID "${args[0]}" not found`);
+      console.error(`   Subscription with ID "${subscriptionId}" not found`);
     }
 
     logger.error('Failed to get price points', {
@@ -134,6 +186,7 @@ Arguments:
 
 Options:
   --help, -h         Show this help message
+  --verbose, -v      Show all price points (default shows active + first 10)
 
 Examples:
   # Get all price points for a subscription
@@ -146,6 +199,9 @@ Examples:
   npm run get-price-points abc123-def456-ghi789 GBR
 
 Notes:
+  - Shows ALL available price points, not just currently active ones
+  - ⭐ marks price points that are currently active for your subscription
+  - You can use ANY price point (not just active ones) for promotional offers
   - Price points represent different pricing tiers available in the App Store
   - Each price point has a customer price (what users pay) and proceeds (what you earn)
   - FREE_TRIAL offers do not need price points

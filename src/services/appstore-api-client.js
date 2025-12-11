@@ -1,4 +1,4 @@
-const { ApiClient, AppsApi, BuildsApi, CertificatesApi, DevicesApi, ProfilesApi, BundleIdsApi, BetaGroupsApi, BetaTestersApi, AppStoreVersionsApi, SubscriptionPromotionalOffersApi } = require('app_store_connect_api');
+const { ApiClient, AppsApi, BuildsApi, CertificatesApi, DevicesApi, ProfilesApi, BundleIdsApi, BetaGroupsApi, BetaTestersApi, AppStoreVersionsApi, SubscriptionPromotionalOffersApi, SubscriptionsApi } = require('app_store_connect_api');
 const authService = require('./auth');
 const logger = require('../utils/logger');
 const { config } = require('../config/appstore');
@@ -24,6 +24,7 @@ class AppStoreConnectAPIClient {
     this.betaTestersApi = new BetaTestersApi(this.apiClient);
     this.appStoreVersionsApi = new AppStoreVersionsApi(this.apiClient);
     this.subscriptionPromotionalOffersApi = new SubscriptionPromotionalOffersApi(this.apiClient);
+    this.subscriptionsApi = new SubscriptionsApi(this.apiClient);
   }
 
   /**
@@ -447,6 +448,87 @@ class AppStoreConnectAPIClient {
       'getPromotionalOfferPrices',
       { id, ...opts }
     );
+  }
+
+  // Subscriptions API methods
+  async getSubscriptionPricePoints(id, opts = {}) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionsApi.subscriptionsPricePointsGetToManyRelated(id, opts, callback),
+      'getSubscriptionPricePoints',
+      { id, ...opts }
+    );
+  }
+
+  /**
+   * Fetch the next page of results using a pagination URL
+   * @param {string} nextUrl - The full URL for the next page from response.links.next
+   * @param {number} retryCount - Current retry attempt (for internal use)
+   * @returns {Promise} Promise resolving to the next page of results
+   */
+  async getNextPage(nextUrl, retryCount = 0) {
+    const axios = require('axios');
+    const maxRetries = 3;
+    const baseDelay = 1000; // 1 second
+    
+    logger.info('Fetching next page', { url: nextUrl, attempt: retryCount + 1 });
+    
+    try {
+      const token = authService.generateToken();
+      
+      const response = await axios.get(nextUrl, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000, // 30 second timeout
+        validateStatus: (status) => status >= 200 && status < 300
+      });
+      
+      logger.info('getNextPage completed successfully', {
+        hasData: !!response.data?.data,
+        resultCount: response.data?.data?.length || 0,
+        hasNextPage: !!response.data?.links?.next
+      });
+      
+      return response.data;
+    } catch (error) {
+      const isRetryable = 
+        error.code === 'ECONNRESET' || 
+        error.code === 'ETIMEDOUT' || 
+        error.code === 'ENOTFOUND' ||
+        error.message?.includes('socket hang up') ||
+        error.message?.includes('timeout') ||
+        (error.response?.status >= 500 && error.response?.status < 600);
+      
+      if (isRetryable && retryCount < maxRetries) {
+        // Exponential backoff: 1s, 2s, 4s
+        const delay = baseDelay * Math.pow(2, retryCount);
+        
+        logger.warn(`getNextPage failed, retrying in ${delay}ms`, {
+          url: nextUrl,
+          error: error.message,
+          attempt: retryCount + 1,
+          maxRetries,
+          nextDelay: delay
+        });
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        // Retry the request
+        return this.getNextPage(nextUrl, retryCount + 1);
+      }
+      
+      logger.error('getNextPage failed after retries', {
+        url: nextUrl,
+        error: error.message,
+        code: error.code,
+        status: error.response?.status,
+        attempts: retryCount + 1
+      });
+      
+      throw error;
+    }
   }
 }
 

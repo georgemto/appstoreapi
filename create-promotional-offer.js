@@ -32,12 +32,13 @@ async function createPromotionalOffer() {
     const offerMode = getArgValue(args, '--mode') || 'FREE_TRIAL';
     const numberOfPeriods = parseInt(getArgValue(args, '--periods') || '3');
     const pricePointId = getArgValue(args, '--price-point');
+    const territoriesArg = getArgValue(args, '--territories');
     const listPricePoints = args.includes('--list-price-points');
 
     // If user wants to list price points, show them and exit
     if (listPricePoints) {
-      console.log('📋 Fetching available price points...\n');
-      const pricePoints = await promotionalOfferService.getSubscriptionPricePoints(subscriptionId);
+      console.log('📋 Fetching ALL available price points...\n');
+      const pricePoints = await promotionalOfferService.getAllAvailablePricePoints(subscriptionId);
       
       if (pricePoints.length === 0) {
         console.log('❌ No price points found for this subscription');
@@ -59,7 +60,8 @@ async function createPromotionalOffer() {
       Object.entries(byTerritory).forEach(([territory, points]) => {
         console.log(`Territory: ${territory}`);
         points.forEach(pp => {
-          console.log(`  ID: ${pp.id}`);
+          const activeIndicator = pp.isActive ? ' ⭐ (ACTIVE)' : '';
+          console.log(`  ID: ${pp.id}${activeIndicator}`);
           console.log(`  Customer Price: ${pp.customerPrice}`);
           console.log(`  Proceeds: ${pp.proceeds}`);
           console.log();
@@ -67,7 +69,9 @@ async function createPromotionalOffer() {
       });
       
       console.log('─'.repeat(80));
-      console.log(`\nTotal: ${pricePoints.length} price points\n`);
+      console.log(`\nTotal: ${pricePoints.length} price points available\n`);
+      console.log('💡 ⭐ marks currently active prices');
+      console.log('💡 You can use ANY price point shown (not just active ones) for promotional offers');
       console.log('💡 Use --price-point <id> to specify a price point for PAY_AS_YOU_GO or PAY_UP_FRONT offers');
       process.exit(0);
     }
@@ -82,6 +86,7 @@ async function createPromotionalOffer() {
     console.log(`Offer Mode: ${offerMode}`);
     console.log(`Number of Periods: ${numberOfPeriods}`);
     if (pricePointId) console.log(`Price Point ID: ${pricePointId}`);
+    if (territoriesArg) console.log(`Territories: ${territoriesArg}`);
     console.log('─'.repeat(80));
     console.log();
 
@@ -101,6 +106,11 @@ async function createPromotionalOffer() {
 
     if (pricePointId) {
       offerData.pricePoints = pricePointId;
+    }
+
+    if (territoriesArg) {
+      // Parse territories as comma-separated list
+      offerData.territories = territoriesArg.split(',').map(t => t.trim());
     }
 
     const result = await promotionalOfferService.createPromotionalOffer(subscriptionId, offerData);
@@ -187,6 +197,8 @@ Options:
                       (default: FREE_TRIAL)
   --periods <num>     Number of periods (1-12, default: 3)
   --price-point <id>  Price point ID (required for PAY_AS_YOU_GO and PAY_UP_FRONT)
+  --territories <ids> Comma-separated territory codes (e.g., "USA" or "USA,GBR,CAN")
+                      If not specified, uses all available territories
   --list-price-points List available price points for this subscription
   --help, -h          Show this help message
 
@@ -197,8 +209,11 @@ Examples:
   # Create a free trial offer (no price point needed)
   npm run create-promo-offer abc123-def456-ghi789 --name "Free Trial" --mode FREE_TRIAL --periods 1 --duration ONE_WEEK
 
-  # Create a discounted offer with specific price point
-  npm run create-promo-offer abc123-def456-ghi789 --name "50% Off" --mode PAY_AS_YOU_GO --price-point "price-point-id-here"
+  # Create a discounted offer with specific price point (USA only)
+  npm run create-promo-offer abc123-def456-ghi789 --name "50% Off" --mode PAY_AS_YOU_GO --price-point "price-point-id-here" --territories USA
+  
+  # ✨ NEW: Create a discounted offer for MULTIPLE territories (auto-converts price tier)
+  npm run create-promo-offer abc123-def456-ghi789 --name "Global 50% Off" --mode PAY_AS_YOU_GO --price-point "usa-price-point-id" --territories USA,GBR,CAN,AUS
 
   # Create with custom name and duration
   npm run create-promo-offer abc123-def456-ghi789 --name "Spring Sale" --duration ONE_MONTH --mode FREE_TRIAL
@@ -217,6 +232,24 @@ Notes:
   - Offer codes must be unique per subscription
   - Offer names must be unique per subscription
   - The generated code follows format: PREFIX_TIMESTAMP_RANDOM
+  
+  ⚠️  IMPORTANT - Price Points and Territories (AUTO-CONVERSION ENABLED):
+  - ✨ NEW: Automatic price tier conversion across territories!
+  - When you provide a single --price-point, it's automatically converted to equivalent tiers
+  - Example: If you provide a USA $0.99 price point (tier 10010), the system will:
+    * Use USA tier 10010 ($0.99) for USA users
+    * Auto-convert to GBR tier 10010 (£0.99) for UK users
+    * Auto-convert to CAN tier 10010 (CAD $0.99) for Canada users
+    * And so on for all territories in --territories parameter
+  - This uses Apple's price tier equivalency system for consistent global pricing
+  - You can now safely specify multiple territories with a single price point!
+  
+  Price Point Formats:
+  1. Single price point (auto-converts to all territories):
+     --price-point <id> --territories USA,GBR,CAN,AUS
+  
+  2. Territory-specific price points (advanced):
+     Requires code modification to pass object format
 
 Related Commands:
   npm run get-product-ids <bundle-id>     # Get subscription IDs for a bundle ID
