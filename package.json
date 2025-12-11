@@ -11,6 +11,7 @@
     "debug-auth": "node debug-auth.js",
     "get-apps": "node get-all-apps.js",
     "get-product-ids": "node get-subscription-product-ids.js",
+    "get-price-points": "node get-price-points.js",
     "create-promo-offer": "node create-promotional-offer.js",
     "bulk-create-promo": "node bulk-create-promotional-offers.js",
     "get-promo-offers": "node get-promotional-offers.js",

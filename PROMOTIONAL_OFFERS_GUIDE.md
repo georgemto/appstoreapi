@@ -38,10 +38,24 @@ Promotional offers allow you to provide discounted subscription pricing to attra
 | **Duration** | THREE_DAYS, ONE_WEEK, TWO_WEEKS, ONE_MONTH, TWO_MONTHS, THREE_MONTHS, SIX_MONTHS, ONE_YEAR |
 | **Offer Modes** | PAY_AS_YOU_GO, PAY_UP_FRONT, FREE_TRIAL |
 | **Periods** | 1-12 billing periods |
+| **Pricing** | Support for price points (required for paid offers) |
 | **Bulk Creation** | Create offers for all subscriptions in a group at once |
 | **Group Filtering** | Creates offers ONLY for subscriptions in the specified group |
 | **Wildcard Support** | Use `"*"` as reference name to create for ALL groups |
 | **Exact Match** | Reference name filtering uses exact match only (case-sensitive) |
+
+### Offer Modes and Pricing
+
+| Offer Mode | Description | Price Point Required | Use Case |
+|------------|-------------|---------------------|----------|
+| **FREE_TRIAL** | Completely free for the specified duration | ❌ No | Attract new subscribers with risk-free trial |
+| **PAY_AS_YOU_GO** | Discounted price per billing period | ✅ Yes | Incentivize existing or new subscribers with discounted rates |
+| **PAY_UP_FRONT** | Discounted one-time payment for multiple periods | ✅ Yes | Offer bulk discounts for longer commitments |
+
+**Important:**
+- FREE_TRIAL offers are always $0 and don't need price points
+- PAY_AS_YOU_GO and PAY_UP_FRONT require you to specify a price point ID
+- Use `npm run get-price-points <subscription-id>` to see available price points
 
 ---
 
@@ -79,6 +93,26 @@ This will show:
 - App name and ID
 - **Subscription groups** with their **reference names** (needed for bulk creation)
 - All subscriptions with product IDs and IDs
+
+### Get Price Points (for Paid Offers)
+
+If you're creating PAY_AS_YOU_GO or PAY_UP_FRONT offers, you'll need price point IDs:
+
+```bash
+# Get all price points for a subscription
+npm run get-price-points <subscription-id>
+
+# Get price points for a specific territory
+npm run get-price-points <subscription-id> USA
+```
+
+This will show:
+- Price point IDs (needed for creating paid offers)
+- Customer price (what users pay)
+- Proceeds (what you earn)
+- Territory codes
+
+**Note:** FREE_TRIAL offers do not require price points as they're always $0.
 
 ---
 
@@ -151,31 +185,42 @@ npm run create-promo-offer <subscription-id> [options]
 - `--code <code>` - Custom offer code (3-25 uppercase alphanumeric)
 - `--prefix <prefix>` - Prefix for auto-generated code
 - `--duration <dur>` - Duration (default: ONE_MONTH)
-- `--mode <mode>` - Offer mode (default: PAY_AS_YOU_GO)
+- `--mode <mode>` - Offer mode (default: FREE_TRIAL)
 - `--periods <num>` - Number of periods (1-12, default: 3)
+- `--price-point <id>` - Price point ID (required for PAY_AS_YOU_GO and PAY_UP_FRONT)
+- `--list-price-points` - List available price points for the subscription
 
 **Examples:**
 
 ```bash
-# Auto-generated offer code
-npm run create-promo-offer abc123-def456-ghi789
+# List available price points first
+npm run create-promo-offer abc123-def456-ghi789 --list-price-points
 
-# Custom offer code
-npm run create-promo-offer abc123-def456-ghi789 \
-  --name "Summer Sale" \
-  --code SUMMER2024
-
-# Free trial offer
+# Free trial offer (no price point needed)
 npm run create-promo-offer abc123-def456-ghi789 \
   --name "Free Trial" \
   --mode FREE_TRIAL \
   --periods 1 \
   --duration ONE_WEEK
 
+# Discounted offer with specific price point
+npm run create-promo-offer abc123-def456-ghi789 \
+  --name "50% Off" \
+  --mode PAY_AS_YOU_GO \
+  --price-point "price-point-id-here" \
+  --periods 3
+
+# Custom offer code
+npm run create-promo-offer abc123-def456-ghi789 \
+  --name "Summer Sale" \
+  --code SUMMER2024 \
+  --mode FREE_TRIAL
+
 # With custom prefix
 npm run create-promo-offer abc123-def456-ghi789 \
   --name "Black Friday" \
-  --prefix BLACKFRI
+  --prefix BLACKFRI \
+  --mode FREE_TRIAL
 ```
 
 #### API Endpoint
@@ -466,6 +511,7 @@ This ensures accurate, reliable group filtering that respects Apple's subscripti
 | GET | `/api/promotional-offers/bundle/:bundleId` | Get offers by bundle ID |
 | POST | `/api/promotional-offers/bulk` | Bulk create offers |
 | GET | `/api/subscriptions/:id/promotional-offers` | Get offers for subscription |
+| GET | `/api/subscriptions/:id/price-points` | Get price points for subscription |
 
 ### Bundle ID Operations
 
@@ -512,6 +558,49 @@ GET /api/promotional-offers/bundle/:bundleId?referenceName=Group%201
 }
 ```
 
+### Get Subscription Price Points
+
+#### API Endpoint
+
+```http
+GET /api/subscriptions/:id/price-points?territory=USA
+```
+
+**Query Parameters:**
+- `territory` - Filter by territory code (optional, e.g., USA, GBR, CAN)
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "price-point-id-1",
+      "territory": "USA",
+      "customerPrice": "$4.99",
+      "proceeds": "$3.50",
+      "type": "subscriptionPricePoints"
+    },
+    {
+      "id": "price-point-id-2",
+      "territory": "USA",
+      "customerPrice": "$9.99",
+      "proceeds": "$7.00",
+      "type": "subscriptionPricePoints"
+    }
+  ],
+  "count": 2,
+  "territory": "USA"
+}
+```
+
+**Usage:**
+- Use the `id` field when creating PAY_AS_YOU_GO or PAY_UP_FRONT promotional offers
+- `customerPrice` shows what users will pay
+- `proceeds` shows what you'll earn after Apple's commission
+- FREE_TRIAL offers don't need price points
+
 ---
 
 ## Offer Code Management
@@ -556,40 +645,39 @@ npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "Group 1" \
   --prefix FREETRIAL
 ```
 
-### 2. Seasonal Sale
+### 2. Seasonal Sale (with Price Point)
 
 ```bash
-npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "Group 1" \
+# First, get a subscription ID and check price points
+npm run get-product-ids com.vtech.plus.inapp.ios.test3
+npm run get-price-points <subscription-id> USA
+
+# Create discounted offer with specific price point
+npm run create-promo-offer <subscription-id> \
   --name "Spring Sale 2024" \
   --mode PAY_AS_YOU_GO \
   --periods 3 \
   --duration ONE_MONTH \
+  --price-point "price-point-id-here" \
   --prefix SPRING24
 ```
 
-### 3. Black Friday Deal
+**Note:** PAY_AS_YOU_GO and PAY_UP_FRONT modes require `--price-point` parameter.
+
+### 3. Single Subscription Offer with Custom Price
 
 ```bash
-npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "Group 1" \
-  --name "Black Friday - 50% Off" \
-  --mode PAY_UP_FRONT \
-  --periods 6 \
-  --duration ONE_MONTH \
-  --prefix BLACKFRI
-```
-
-### 4. Single Subscription Offer
-
-```bash
-# Get subscription ID first
+# Get subscription ID and price points first
 npm run get-product-ids com.vtech.plus.inapp.ios.test3
+npm run get-price-points <subscription-id>
 
-# Create offer for specific subscription
+# Create offer with specific price point
 npm run create-promo-offer <subscription-id> \
   --name "VIP Discount" \
   --code VIP2024 \
   --duration THREE_MONTHS \
   --mode PAY_AS_YOU_GO \
+  --price-point "price-point-id-here" \
   --periods 2
 ```
 

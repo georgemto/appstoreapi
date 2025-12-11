@@ -132,4 +132,14 @@ router.get('/:id/promotional-offers',
   require('../controllers/promotional-offers').getPromotionalOffersForSubscription
 );
 
+/**
+ * @route   GET /api/subscriptions/:id/price-points
+ * @desc    Get price points for a subscription
+ * @access  Public
+ */
+router.get('/:id/price-points',
+  validateSubscriptionId,
+  require('../controllers/promotional-offers').getSubscriptionPricePoints
+);
+
 module.exports = router;

@@ -115,6 +115,86 @@ class PromotionalOfferService {
     if (data.offerCode) {
       this.validateOfferCode(data.offerCode);
     }
+
+    // Validate price points for non-free offers
+    if (data.offerMode !== 'FREE_TRIAL') {
+      if (!data.pricePoints) {
+        throw new ValidationError(
+          `Price point(s) required for ${data.offerMode} offer mode. Use pricePoints parameter or set offerMode to FREE_TRIAL.`
+        );
+      }
+      
+      if (typeof data.pricePoints !== 'string' && typeof data.pricePoints !== 'object') {
+        throw new ValidationError(
+          'pricePoints must be a string (single price point ID) or an object mapping territories to price point IDs'
+        );
+      }
+    }
+  }
+
+  /**
+   * Get subscription price points
+   * @param {string} subscriptionId - Subscription ID
+   * @param {string} territory - Optional territory filter (e.g., 'USA', 'GBR')
+   * @returns {array} Array of price point objects with id, territory, and pricing info
+   */
+  async getSubscriptionPricePoints(subscriptionId, territory = null) {
+    try {
+      if (!subscriptionId) {
+        throw new ValidationError('Subscription ID is required');
+      }
+
+      const params = appStoreClient.buildParams(
+        {},
+        ['pricePoints'],
+        {
+          subscriptions: ['name', 'productId'],
+          subscriptionPricePoints: ['customerPrice', 'proceeds']
+        },
+        null,
+        200
+      );
+
+      const response = await appStoreClient.get(
+        `${this.endpoints.subscriptions}/${subscriptionId}`,
+        params
+      );
+
+      if (!response.included) {
+        logger.warn(`No price points found for subscription ${subscriptionId}`);
+        return [];
+      }
+
+      // Extract price points with their details
+      const pricePoints = response.included
+        .filter(item => item.type === 'subscriptionPricePoints')
+        .map(point => {
+          // Get territory from relationships
+          const territoryId = point.relationships?.territory?.data?.id;
+          
+          return {
+            id: point.id,
+            territory: territoryId,
+            customerPrice: point.attributes?.customerPrice,
+            proceeds: point.attributes?.proceeds,
+            type: point.type
+          };
+        });
+
+      // Filter by territory if specified
+      if (territory) {
+        return pricePoints.filter(point => point.territory === territory);
+      }
+
+      logger.info(`Retrieved ${pricePoints.length} price points for subscription ${subscriptionId}`);
+      return pricePoints;
+    } catch (error) {
+      if (error.statusCode === 404) {
+        throw new NotFoundError(`Subscription with ID ${subscriptionId} not found`);
+      }
+      logger.error(`Failed to get subscription price points: ${error.message}`, error);
+      throw error;
+    }
   }
 
   /**
@@ -192,13 +272,13 @@ class PromotionalOfferService {
       
       logger.info(`Creating promotional offer with ${territories.length} territories`, {
         subscriptionId,
-        territories
+        territories,
+        offerMode: offerData.offerMode,
+        hasPricePoints: !!offerData.pricePoints
       });
 
       // Build inline price creates for each territory
       // Apple requires local IDs in the format ${local-id} (with curly braces)
-      // For FREE_TRIAL offers, subscriptionPricePoint should be null or free
-      // For PAY_AS_YOU_GO, we'd need to specify actual price points
       const inlinePrices = territories.map((territoryCode, index) => {
         const priceData = {
           type: 'subscriptionPromotionalOfferPrices',
@@ -215,8 +295,34 @@ class PromotionalOfferService {
         
         // For FREE_TRIAL offer mode, price point is not needed (it's free)
         // For PAY_AS_YOU_GO and PAY_UP_FRONT, we need to specify a price point
-        // Since this is complex, we'll leave it out and let Apple use defaults for now
-        // TODO: Add support for custom pricing via subscriptionPricePoint relationship
+        if (offerData.offerMode !== 'FREE_TRIAL') {
+          // User can provide price points in two formats:
+          // 1. Single pricePointId (string) - used for all territories
+          // 2. pricePoints object mapping territories to price point IDs
+          let pricePointId = null;
+          
+          if (offerData.pricePoints) {
+            if (typeof offerData.pricePoints === 'string') {
+              // Single price point for all territories
+              pricePointId = offerData.pricePoints;
+            } else if (typeof offerData.pricePoints === 'object') {
+              // Territory-specific price points
+              pricePointId = offerData.pricePoints[territoryCode];
+            }
+          }
+          
+          if (pricePointId) {
+            priceData.relationships.subscriptionPricePoint = {
+              data: {
+                type: 'subscriptionPricePoints',
+                id: pricePointId
+              }
+            };
+            logger.info(`Using price point ${pricePointId} for territory ${territoryCode}`);
+          } else {
+            logger.warn(`No price point specified for ${offerData.offerMode} offer in territory ${territoryCode}`);
+          }
+        }
         
         return priceData;
       });

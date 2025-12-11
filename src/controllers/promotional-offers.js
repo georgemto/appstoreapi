@@ -164,6 +164,24 @@ class PromotionalOfferController {
       count: offers.length
     });
   });
+
+  /**
+   * Get price points for a subscription
+   * GET /api/subscriptions/:id/price-points
+   */
+  getSubscriptionPricePoints = handleAsyncError(async (req, res) => {
+    const { id } = req.params;
+    const { territory } = req.query;
+
+    const pricePoints = await promotionalOfferService.getSubscriptionPricePoints(id, territory);
+
+    res.status(200).json({
+      success: true,
+      data: pricePoints,
+      count: pricePoints.length,
+      territory: territory || 'all'
+    });
+  });
 }
 
 // Export controller instance

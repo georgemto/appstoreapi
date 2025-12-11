@@ -29,8 +29,48 @@ async function createPromotionalOffer() {
     const offerCode = getArgValue(args, '--code');
     const offerCodePrefix = getArgValue(args, '--prefix');
     const duration = getArgValue(args, '--duration') || 'ONE_MONTH';
-    const offerMode = getArgValue(args, '--mode') || 'PAY_AS_YOU_GO';
+    const offerMode = getArgValue(args, '--mode') || 'FREE_TRIAL';
     const numberOfPeriods = parseInt(getArgValue(args, '--periods') || '3');
+    const pricePointId = getArgValue(args, '--price-point');
+    const listPricePoints = args.includes('--list-price-points');
+
+    // If user wants to list price points, show them and exit
+    if (listPricePoints) {
+      console.log('📋 Fetching available price points...\n');
+      const pricePoints = await promotionalOfferService.getSubscriptionPricePoints(subscriptionId);
+      
+      if (pricePoints.length === 0) {
+        console.log('❌ No price points found for this subscription');
+        process.exit(1);
+      }
+
+      console.log('─'.repeat(80));
+      console.log('Available Price Points:\n');
+      
+      // Group by territory
+      const byTerritory = {};
+      pricePoints.forEach(pp => {
+        if (!byTerritory[pp.territory]) {
+          byTerritory[pp.territory] = [];
+        }
+        byTerritory[pp.territory].push(pp);
+      });
+
+      Object.entries(byTerritory).forEach(([territory, points]) => {
+        console.log(`Territory: ${territory}`);
+        points.forEach(pp => {
+          console.log(`  ID: ${pp.id}`);
+          console.log(`  Customer Price: ${pp.customerPrice}`);
+          console.log(`  Proceeds: ${pp.proceeds}`);
+          console.log();
+        });
+      });
+      
+      console.log('─'.repeat(80));
+      console.log(`\nTotal: ${pricePoints.length} price points\n`);
+      console.log('💡 Use --price-point <id> to specify a price point for PAY_AS_YOU_GO or PAY_UP_FRONT offers');
+      process.exit(0);
+    }
 
     console.log('🎁 Creating promotional offer...\n');
     console.log('─'.repeat(80));
@@ -41,6 +81,7 @@ async function createPromotionalOffer() {
     console.log(`Duration: ${duration}`);
     console.log(`Offer Mode: ${offerMode}`);
     console.log(`Number of Periods: ${numberOfPeriods}`);
+    if (pricePointId) console.log(`Price Point ID: ${pricePointId}`);
     console.log('─'.repeat(80));
     console.log();
 
@@ -56,6 +97,10 @@ async function createPromotionalOffer() {
       offerData.offerCode = offerCode;
     } else if (offerCodePrefix) {
       offerData.offerCodePrefix = offerCodePrefix;
+    }
+
+    if (pricePointId) {
+      offerData.pricePoints = pricePointId;
     }
 
     const result = await promotionalOfferService.createPromotionalOffer(subscriptionId, offerData);
@@ -139,31 +184,39 @@ Options:
                       TWO_MONTHS, THREE_MONTHS, SIX_MONTHS, ONE_YEAR
                       (default: ONE_MONTH)
   --mode <mode>       Offer mode: PAY_AS_YOU_GO, PAY_UP_FRONT, FREE_TRIAL
-                      (default: PAY_AS_YOU_GO)
+                      (default: FREE_TRIAL)
   --periods <num>     Number of periods (1-12, default: 3)
+  --price-point <id>  Price point ID (required for PAY_AS_YOU_GO and PAY_UP_FRONT)
+  --list-price-points List available price points for this subscription
   --help, -h          Show this help message
 
 Examples:
-  # Create with auto-generated code
-  npm run create-promo-offer abc123-def456-ghi789
+  # List available price points for a subscription
+  npm run create-promo-offer abc123-def456-ghi789 --list-price-points
 
-  # Create with custom name and duration
-  npm run create-promo-offer abc123-def456-ghi789 --name "Spring Sale" --duration ONE_MONTH
-
-  # Create with custom offer code
-  npm run create-promo-offer abc123-def456-ghi789 --name "Summer Sale" --code SUMMER2024
-
-  # Create a free trial offer
+  # Create a free trial offer (no price point needed)
   npm run create-promo-offer abc123-def456-ghi789 --name "Free Trial" --mode FREE_TRIAL --periods 1 --duration ONE_WEEK
 
+  # Create a discounted offer with specific price point
+  npm run create-promo-offer abc123-def456-ghi789 --name "50% Off" --mode PAY_AS_YOU_GO --price-point "price-point-id-here"
+
+  # Create with custom name and duration
+  npm run create-promo-offer abc123-def456-ghi789 --name "Spring Sale" --duration ONE_MONTH --mode FREE_TRIAL
+
+  # Create with custom offer code
+  npm run create-promo-offer abc123-def456-ghi789 --name "Summer Sale" --code SUMMER2024 --mode FREE_TRIAL
+
   # Create with custom prefix for auto-generated code
-  npm run create-promo-offer abc123-def456-ghi789 --name "Black Friday" --prefix BLACKFRI
+  npm run create-promo-offer abc123-def456-ghi789 --name "Black Friday" --prefix BLACKFRI --mode FREE_TRIAL
 
 Notes:
+  - FREE_TRIAL mode does not require a price point (always $0)
+  - PAY_AS_YOU_GO and PAY_UP_FRONT modes require --price-point parameter
+  - Use --list-price-points to see available price points for the subscription
   - If neither --code nor --prefix is provided, a random code will be generated
   - Offer codes must be unique per subscription
   - Offer names must be unique per subscription
-  - The generated code follows format: PREFIX-TIMESTAMP-RANDOM
+  - The generated code follows format: PREFIX_TIMESTAMP_RANDOM
 
 Related Commands:
   npm run get-product-ids <bundle-id>     # Get subscription IDs for a bundle ID
