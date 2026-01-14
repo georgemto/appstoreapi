@@ -16,7 +16,10 @@
     "bulk-create-promo": "node bulk-create-promotional-offers.js",
     "get-promo-offers": "node get-promotional-offers.js",
     "delete-promo-offer": "node delete-promotional-offers.js",
-    "rollback-promo-offers": "node delete-promotional-offers.js"
+    "rollback-promo-offers": "node delete-promotional-offers.js",
+    "generate-product-ids": "node generate-product-ids.js",
+    "bulk-create-subs": "node bulk-create-subscriptions.js",
+    "set-prices": "node set-subscription-prices.js"
   },
   "keywords": [
     "apple",

@@ -19,6 +19,7 @@
 - **Validation**: Use Joi schemas in `src/middleware/validation.js`. Validate in middleware before controllers.
 - **Testing**: Jest with supertest. Mock services with `jest.mock()`. Tests go in `tests/` directory with `.test.js` suffix.
 - **API Responses**: Return `{ success: true/false, data, message, error }` format consistently.
+- **Emojis**: Do not use emojis in code, comments, commit messages, or documentation.
 
 ## Testing & Production Guidelines
 - **⚠️ CRITICAL: ONLY use bundle ID `com.vtech.plus.inapp.ios.test3` for ALL testing purposes**
