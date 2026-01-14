@@ -1,5 +1,5 @@
 const appStoreClient = require('./appstore-client');
-const { config } = require('../config/appstore');
+const { config, ALL_TERRITORIES } = require('../config/appstore');
 const { NotFoundError, ValidationError, AppleAPIError } = require('../utils/errors');
 const logger = require('../utils/logger');
 
@@ -318,6 +318,241 @@ class SubscriptionService {
         throw new ValidationError(`Price at index ${index} is missing startDate`);
       }
     });
+  }
+
+  /**
+   * Get all available price points for a subscription
+   * @param {string} subscriptionId - Subscription ID
+   * @param {string} territory - Optional territory filter (e.g., 'USA')
+   * @returns {Array} Array of price point objects
+   */
+  async getAllPricePoints(subscriptionId, territory = null) {
+    try {
+      if (!subscriptionId) {
+        throw new ValidationError('Subscription ID is required');
+      }
+
+      const allPricePoints = [];
+      let nextUrl = null;
+
+      const baseParams = {
+        'fields[subscriptionPricePoints]': 'customerPrice,proceeds',
+        'fields[territories]': 'currency',
+        include: 'territory',
+        limit: 200
+      };
+
+      if (territory) {
+        baseParams['filter[territory]'] = territory;
+      }
+
+      do {
+        let response;
+        if (nextUrl) {
+          response = await appStoreClient.getNextPage(nextUrl);
+        } else {
+          response = await appStoreClient.get(
+            `${this.endpoints.subscriptions}/${subscriptionId}/pricePoints`,
+            baseParams
+          );
+        }
+
+        if (response.data) {
+          allPricePoints.push(...response.data);
+        }
+
+        nextUrl = response.links?.next;
+      } while (nextUrl);
+
+      // Parse price points with territory info
+      const pricePoints = allPricePoints.map(point => {
+        let territoryCode;
+        try {
+          const decoded = Buffer.from(point.id, 'base64').toString('utf-8');
+          const parsed = JSON.parse(decoded);
+          territoryCode = parsed.t;
+        } catch (e) {
+          territoryCode = 'UNKNOWN';
+        }
+
+        return {
+          id: point.id,
+          territory: territoryCode,
+          customerPrice: point.attributes?.customerPrice,
+          proceeds: point.attributes?.proceeds
+        };
+      });
+
+      logger.info(`Retrieved ${pricePoints.length} price points for subscription ${subscriptionId}`);
+      return pricePoints;
+    } catch (error) {
+      logger.error(`Failed to get price points for ${subscriptionId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Find price point ID by customer price for a specific territory
+   * @param {string} subscriptionId - Subscription ID
+   * @param {string} price - Customer price (e.g., "12.99")
+   * @param {string} territory - Territory code (e.g., "USA")
+   * @returns {string|null} Price point ID or null if not found
+   */
+  async findPricePointByPrice(subscriptionId, price, territory = 'USA') {
+    const pricePoints = await this.getAllPricePoints(subscriptionId, territory);
+    const priceStr = parseFloat(price).toFixed(2);
+    
+    const match = pricePoints.find(pp => 
+      pp.territory === territory && 
+      parseFloat(pp.customerPrice).toFixed(2) === priceStr
+    );
+
+    return match ? match.id : null;
+  }
+
+  /**
+   * Get the price tier from a price point ID
+   * Price point IDs are base64 encoded JSON: {"s":"subscriptionId","t":"territory","p":"priceTier"}
+   * @param {string} pricePointId - Base64 encoded price point ID
+   * @returns {string} Price tier (e.g., "10142")
+   */
+  getPriceTierFromPricePointId(pricePointId) {
+    try {
+      const decoded = Buffer.from(pricePointId, 'base64').toString('utf-8');
+      const parsed = JSON.parse(decoded);
+      return parsed.p;
+    } catch (e) {
+      throw new ValidationError('Invalid price point ID format');
+    }
+  }
+
+  /**
+   * Build a price point ID for a specific territory using a known tier
+   * @param {string} subscriptionId - Subscription ID
+   * @param {string} territory - Territory code
+   * @param {string} priceTier - Price tier from another territory's price point
+   * @returns {string} Base64 encoded price point ID
+   */
+  buildPricePointId(subscriptionId, territory, priceTier) {
+    const data = { s: subscriptionId, t: territory, p: priceTier };
+    return Buffer.from(JSON.stringify(data)).toString('base64');
+  }
+
+  /**
+   * Set subscription price for a specific territory
+   * @param {string} subscriptionId - Subscription ID
+   * @param {string} pricePointId - Price point ID
+   * @param {Date} startDate - Optional start date (defaults to now)
+   * @returns {Object} Created price object
+   */
+  async setSubscriptionPrice(subscriptionId, pricePointId, startDate = null) {
+    try {
+      if (!subscriptionId || !pricePointId) {
+        throw new ValidationError('Subscription ID and price point ID are required');
+      }
+
+      const payload = {
+        data: {
+          type: 'subscriptionPrices',
+          relationships: {
+            subscription: {
+              data: {
+                type: 'subscriptions',
+                id: subscriptionId
+              }
+            },
+            subscriptionPricePoint: {
+              data: {
+                type: 'subscriptionPricePoints',
+                id: pricePointId
+              }
+            }
+          }
+        }
+      };
+
+      // Add start date if provided
+      if (startDate) {
+        payload.data.attributes = {
+          startDate: startDate instanceof Date ? startDate.toISOString().split('T')[0] : startDate
+        };
+      }
+
+      const response = await appStoreClient.post('/subscriptionPrices', payload);
+      
+      logger.info(`Set price for subscription ${subscriptionId} using price point ${pricePointId}`);
+      return response;
+    } catch (error) {
+      logger.error(`Failed to set subscription price:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set subscription prices for all territories using a base USD price
+   * @param {string} subscriptionId - Subscription ID
+   * @param {string} usdPrice - USD price (e.g., "12.99")
+   * @param {Object} options - Options
+   * @param {boolean} options.dryRun - If true, return what would be done without making changes
+   * @param {Function} options.onProgress - Progress callback (territory, success, error)
+   * @returns {Object} Results with success/failure counts
+   */
+  async setSubscriptionPricesAllTerritories(subscriptionId, usdPrice, options = {}) {
+    const { dryRun = false, onProgress = null } = options;
+
+    // First, find the USD price point to get the tier
+    const usdPricePointId = await this.findPricePointByPrice(subscriptionId, usdPrice, 'USA');
+    if (!usdPricePointId) {
+      throw new ValidationError(`No price point found for $${usdPrice} USD`);
+    }
+
+    const priceTier = this.getPriceTierFromPricePointId(usdPricePointId);
+    logger.info(`Found price tier ${priceTier} for $${usdPrice} USD`);
+
+    // Use static territories list instead of fetching price points
+    const territories = ALL_TERRITORIES;
+    
+    logger.info(`Setting prices for ${territories.length} territories`);
+
+    const results = {
+      total: territories.length,
+      success: 0,
+      failed: 0,
+      skipped: 0,
+      errors: []
+    };
+
+    if (dryRun) {
+      logger.info(`[DRY-RUN] Would set prices for ${territories.length} territories using tier ${priceTier}`);
+      results.skipped = territories.length;
+      return results;
+    }
+
+    // Set price for each territory
+    for (const territory of territories) {
+      try {
+        const pricePointId = this.buildPricePointId(subscriptionId, territory, priceTier);
+        await this.setSubscriptionPrice(subscriptionId, pricePointId);
+        results.success++;
+        
+        if (onProgress) {
+          onProgress(territory, true);
+        }
+
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        results.failed++;
+        results.errors.push({ territory, error: error.message });
+        
+        if (onProgress) {
+          onProgress(territory, false, error.message);
+        }
+      }
+    }
+
+    logger.info(`Set prices for ${results.success}/${results.total} territories`);
+    return results;
   }
 }
 
