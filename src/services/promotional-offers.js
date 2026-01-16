@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const appStoreClient = require('./appstore-client');
 const appStoreAPIClient = require('./appstore-api-client');
 const appService = require('./apps');
+const subscriptionService = require('./subscriptions');
 const { config } = require('../config/appstore');
 const { NotFoundError, ValidationError, AppleAPIError } = require('../utils/errors');
 const logger = require('../utils/logger');
@@ -376,12 +377,13 @@ class PromotionalOfferService {
       // We need to use the prices relationship endpoint instead
       const params = appStoreClient.buildParams(
         {},
-        [],
+        ['territory'],
         {
-          subscriptionPrices: ['startDate'] // Minimal fields
+          subscriptionPrices: ['startDate'],
+          territories: ['currency']
         },
         null,
-        10 // Just need a few to determine territories
+        200 // Fetch all territories
       );
 
       const response = await appStoreClient.get(
@@ -402,18 +404,27 @@ class PromotionalOfferService {
         });
       }
 
+      // If no territories found in relationships, try extracting from included array
+      if (territories.length === 0 && response.included && response.included.length > 0) {
+        response.included.forEach(item => {
+          if (item.type === 'territories' && item.id && !territories.includes(item.id)) {
+            territories.push(item.id);
+          }
+        });
+      }
+
       // If we found territories, return them
       if (territories.length > 0) {
         return territories;
       }
 
-      // Fallback to USA if no prices found
-      logger.warn(`No territories found for subscription ${subscriptionId}, defaulting to USA`);
-      return ['USA'];
+      // Fallback to all available territories if no prices found
+      logger.warn(`No territories found for subscription ${subscriptionId}, fetching all available territories`);
+      return await subscriptionService.getAvailableTerritories();
     } catch (error) {
-      logger.warn(`Could not get subscription territories: ${error.message}`);
-      // Return default territory
-      return ['USA'];
+      logger.warn(`Could not get subscription territories: ${error.message}, fetching all available territories`);
+      // Return all available territories
+      return await subscriptionService.getAvailableTerritories();
     }
   }
 
