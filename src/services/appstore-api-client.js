@@ -1,4 +1,4 @@
-const { ApiClient, AppsApi, BuildsApi, CertificatesApi, DevicesApi, ProfilesApi, BundleIdsApi, BetaGroupsApi, BetaTestersApi, AppStoreVersionsApi, SubscriptionPromotionalOffersApi, SubscriptionsApi } = require('app_store_connect_api');
+const { ApiClient, AppsApi, BuildsApi, CertificatesApi, DevicesApi, ProfilesApi, BundleIdsApi, BetaGroupsApi, BetaTestersApi, AppStoreVersionsApi, SubscriptionPromotionalOffersApi, SubscriptionsApi, SubscriptionIntroductoryOffersApi } = require('app_store_connect_api');
 const authService = require('./auth');
 const logger = require('../utils/logger');
 const { config } = require('../config/appstore');
@@ -25,6 +25,7 @@ class AppStoreConnectAPIClient {
     this.appStoreVersionsApi = new AppStoreVersionsApi(this.apiClient);
     this.subscriptionPromotionalOffersApi = new SubscriptionPromotionalOffersApi(this.apiClient);
     this.subscriptionsApi = new SubscriptionsApi(this.apiClient);
+    this.subscriptionIntroductoryOffersApi = new SubscriptionIntroductoryOffersApi(this.apiClient);
   }
 
   /**
@@ -456,6 +457,53 @@ class AppStoreConnectAPIClient {
       (callback) => this.subscriptionsApi.subscriptionsPricePointsGetToManyRelated(id, opts, callback),
       'getSubscriptionPricePoints',
       { id, ...opts }
+    );
+  }
+
+  // Subscription Introductory Offers API methods
+  async createIntroductoryOffer(subscriptionIntroductoryOfferCreateRequest) {
+    // Use direct HTTP client to avoid deserialization issues with oneOf schemas
+    const appStoreClient = require('./appstore-client');
+    try {
+      const response = await appStoreClient.post(
+        '/subscriptionIntroductoryOffers',
+        subscriptionIntroductoryOfferCreateRequest
+      );
+      logger.info('createIntroductoryOffer completed successfully', {
+        offerId: response.data?.id,
+        territory: response.data?.relationships?.territory?.data?.id
+      });
+      return response;
+    } catch (error) {
+      logger.error('createIntroductoryOffer failed', {
+        error: error.message,
+        status: error.status || error.statusCode
+      });
+      throw error;
+    }
+  }
+
+  async getIntroductoryOffer(id, opts = {}) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionIntroductoryOffersApi.subscriptionIntroductoryOffersGetInstance(id, opts, callback),
+      'getIntroductoryOffer',
+      { id, ...opts }
+    );
+  }
+
+  async updateIntroductoryOffer(id, subscriptionIntroductoryOfferUpdateRequest) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionIntroductoryOffersApi.subscriptionIntroductoryOffersUpdateInstance(id, subscriptionIntroductoryOfferUpdateRequest, callback),
+      'updateIntroductoryOffer',
+      { id, subscriptionIntroductoryOfferUpdateRequest }
+    );
+  }
+
+  async deleteIntroductoryOffer(id) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionIntroductoryOffersApi.subscriptionIntroductoryOffersDeleteInstance(id, callback),
+      'deleteIntroductoryOffer',
+      { id }
     );
   }
 

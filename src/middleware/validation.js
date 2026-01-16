@@ -178,6 +178,127 @@ const promotionalOfferBundleQuerySchema = Joi.object({
   includes: Joi.array().items(Joi.string()).optional()
 });
 
+// Introductory Offer validation schemas
+const introductoryOfferCreateSchema = Joi.object({
+  subscriptionId: Joi.string().pattern(/^[0-9]+$/).required()
+    .messages({
+      'string.pattern.base': 'Subscription ID must be a numeric string',
+      'string.empty': 'Subscription ID is required'
+    }),
+  
+  territory: Joi.string().min(2).max(3).required()
+    .messages({
+      'string.empty': 'Territory is required',
+      'string.min': 'Territory code must be at least 2 characters',
+      'string.max': 'Territory code cannot exceed 3 characters'
+    }),
+  
+  duration: Joi.string().valid(
+    'THREE_DAYS', 'ONE_WEEK', 'TWO_WEEKS', 'ONE_MONTH',
+    'TWO_MONTHS', 'THREE_MONTHS', 'SIX_MONTHS', 'ONE_YEAR'
+  ).required()
+    .messages({
+      'any.only': 'Duration must be one of: THREE_DAYS, ONE_WEEK, TWO_WEEKS, ONE_MONTH, TWO_MONTHS, THREE_MONTHS, SIX_MONTHS, ONE_YEAR'
+    }),
+  
+  offerMode: Joi.string().valid('PAY_AS_YOU_GO', 'PAY_UP_FRONT', 'FREE_TRIAL').required()
+    .messages({
+      'any.only': 'Offer mode must be one of: PAY_AS_YOU_GO, PAY_UP_FRONT, FREE_TRIAL'
+    }),
+  
+  numberOfPeriods: Joi.number().integer().min(1).max(12).required()
+    .messages({
+      'number.min': 'Number of periods must be at least 1',
+      'number.max': 'Number of periods cannot exceed 12',
+      'number.base': 'Number of periods must be a number'
+    }),
+  
+  startDate: Joi.date().iso().optional()
+    .messages({
+      'date.format': 'Start date must be in ISO 8601 format'
+    }),
+  
+  endDate: Joi.date().iso().optional()
+    .messages({
+      'date.format': 'End date must be in ISO 8601 format'
+    }),
+  
+  subscriptionPricePoint: Joi.string().optional()
+    .messages({
+      'string.empty': 'Subscription price point cannot be empty if provided'
+    })
+});
+
+const introductoryOfferUpdateSchema = Joi.object({
+  startDate: Joi.date().iso().allow(null).optional()
+    .messages({
+      'date.format': 'Start date must be in ISO 8601 format'
+    }),
+  
+  endDate: Joi.date().iso().allow(null).optional()
+    .messages({
+      'date.format': 'End date must be in ISO 8601 format'
+    })
+}).min(1)
+  .messages({
+    'object.min': 'At least one field must be provided for update'
+  });
+
+const introductoryOfferBulkCreateSchema = Joi.object({
+  bundleId: Joi.string().pattern(/^[a-zA-Z0-9.-]+$/).required()
+    .messages({
+      'string.pattern.base': 'Bundle ID format is invalid',
+      'string.empty': 'Bundle ID is required'
+    }),
+  
+  referenceName: Joi.string().min(1).max(64).required()
+    .messages({
+      'string.empty': 'Reference name is required for bulk creation',
+      'string.max': 'Reference name cannot exceed 64 characters'
+    }),
+  
+  offerTemplate: Joi.object({
+    territories: Joi.array().items(Joi.string().min(2).max(3)).min(1).required()
+      .messages({
+        'array.min': 'At least one territory is required',
+        'array.base': 'Territories must be an array of territory codes'
+      }),
+    
+    duration: Joi.string().valid(
+      'THREE_DAYS', 'ONE_WEEK', 'TWO_WEEKS', 'ONE_MONTH',
+      'TWO_MONTHS', 'THREE_MONTHS', 'SIX_MONTHS', 'ONE_YEAR'
+    ).required()
+      .messages({
+        'any.only': 'Duration must be one of: THREE_DAYS, ONE_WEEK, TWO_WEEKS, ONE_MONTH, TWO_MONTHS, THREE_MONTHS, SIX_MONTHS, ONE_YEAR'
+      }),
+    
+    offerMode: Joi.string().valid('PAY_AS_YOU_GO', 'PAY_UP_FRONT', 'FREE_TRIAL').required()
+      .messages({
+        'any.only': 'Offer mode must be one of: PAY_AS_YOU_GO, PAY_UP_FRONT, FREE_TRIAL'
+      }),
+    
+    numberOfPeriods: Joi.number().integer().min(1).max(12).required()
+      .messages({
+        'number.min': 'Number of periods must be at least 1',
+        'number.max': 'Number of periods cannot exceed 12',
+        'number.base': 'Number of periods must be a number'
+      }),
+    
+    startDate: Joi.date().iso().optional(),
+    endDate: Joi.date().iso().optional(),
+    subscriptionPricePoint: Joi.string().optional()
+  }).required()
+    .messages({
+      'object.base': 'Offer template is required'
+    })
+});
+
+const introductoryOfferBundleQuerySchema = Joi.object({
+  referenceName: Joi.string().min(1).max(64).optional(),
+  limit: Joi.number().integer().min(1).max(200).optional(),
+  includes: Joi.array().items(Joi.string()).optional()
+});
+
 // Middleware function to validate request data
 const validate = (schema, property = 'body') => {
   return (req, res, next) => {
@@ -227,6 +348,23 @@ const validatePromotionalOfferId = (req, res, next) => {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(id)) {
     return next(new ValidationError('Promotional offer ID must be a valid UUID'));
+  }
+
+  next();
+};
+
+// Middleware to validate introductory offer ID parameter
+const validateIntroductoryOfferId = (req, res, next) => {
+  const { id } = req.params;
+  
+  if (!id || typeof id !== 'string' || id.trim() === '') {
+    return next(new ValidationError('Valid introductory offer ID is required'));
+  }
+
+  // Basic UUID format validation (Apple uses UUIDs for resource IDs)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(id)) {
+    return next(new ValidationError('Introductory offer ID must be a valid UUID'));
   }
 
   next();
@@ -296,11 +434,16 @@ module.exports = {
   promotionalOfferUpdateSchema,
   promotionalOfferBulkCreateSchema,
   promotionalOfferBundleQuerySchema,
+  introductoryOfferCreateSchema,
+  introductoryOfferUpdateSchema,
+  introductoryOfferBulkCreateSchema,
+  introductoryOfferBundleQuerySchema,
 
   // Validation middleware
   validate,
   validateSubscriptionId,
   validatePromotionalOfferId,
+  validateIntroductoryOfferId,
   validatePagination,
   validateIncludes
 };

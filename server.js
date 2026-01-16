@@ -18,6 +18,7 @@ const {
 // Import routes
 const subscriptionRoutes = require('./src/routes/subscriptions');
 const promotionalOffersRoutes = require('./src/routes/promotional-offers');
+const introductoryOffersRoutes = require('./src/routes/introductory-offers');
 const appRoutes = require('./src/routes/apps');
 const buildsRoutes = require('./src/routes/builds');
 const certificatesRoutes = require('./src/routes/certificates');
@@ -116,6 +117,25 @@ app.use('/api/promotional-offers',
   promotionalOffersRoutes
 );
 
+// Introductory offers routes
+app.use('/api/introductory-offers',
+  // Apply write limiter to POST, PUT, DELETE operations
+  (req, res, next) => {
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+      if (req.method === 'POST' && req.path === '/bulk') {
+        // More lenient limit for bulk operations (they take longer)
+        return writeLimiter(req, res, next);
+      }
+      if (req.method === 'POST' && req.path === '/') {
+        return createLimiter(req, res, next);
+      }
+      return writeLimiter(req, res, next);
+    }
+    next();
+  },
+  introductoryOffersRoutes
+);
+
 // App management routes
 app.use('/api/apps', appRoutes);
 
@@ -141,6 +161,8 @@ app.get('/', (req, res) => {
       health: '/health',
       apps: '/api/apps',
       subscriptions: '/api/subscriptions',
+      promotionalOffers: '/api/promotional-offers',
+      introductoryOffers: '/api/introductory-offers',
       builds: '/api/builds',
       certificates: '/api/certificates',
       devices: '/api/devices',
