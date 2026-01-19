@@ -22,10 +22,15 @@
 - **Emojis**: Do not use emojis in code, comments, commit messages, or documentation.
 
 ## Testing & Production Guidelines
-- **⚠️ CRITICAL: ONLY use bundle ID `com.vtech.plus.inapp.ios.test3` for ALL testing purposes**
-- **❌ NEVER use any other bundle IDs for testing**, including:
+
+### iOS Testing
+- **CRITICAL: ONLY use bundle ID `com.vtech.plus.inapp.ios.test3` for ALL iOS testing purposes**
+- **NEVER use any other bundle IDs for iOS testing**, including:
   - `com.vtech.plus` (production app with live subscriptions)
   - `com.vtech.plus.uat` (UAT environment)
   - `com.vtech.plus.inapp.test2` (other test environment)
   - `com.vtech.vcare.uat` (other app)
-- **✅ FOR TESTING: Always use `com.vtech.plus.inapp.ios.test3`**
+
+### Android Testing
+- **CRITICAL: ONLY use application ID `com.vtech.plus.inapp.test` for ALL Android testing purposes**
+- **NEVER use any other application IDs for Android testing**
