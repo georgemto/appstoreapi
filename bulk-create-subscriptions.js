@@ -26,17 +26,21 @@ const BUNDLE_ID = 'com.vtech.plus.inapp.ios.test3';
  * @returns {string} App Store Connect subscription period
  */
 function convertDuration(duration) {
-  const durationMap = {
-    '1 WEEK': 'ONE_WEEK',
-    '1 MONTH': 'ONE_MONTH',
-    '2 MONTHS': 'TWO_MONTHS',
-    '3 MONTHS': 'THREE_MONTHS',
-    '6 MONTHS': 'SIX_MONTHS',
-    '1 YEAR': 'ONE_YEAR'
-  };
-  
+  const validPeriods = [
+    'ONE_WEEK',
+    'ONE_MONTH',
+    'TWO_MONTHS',
+    'THREE_MONTHS',
+    'SIX_MONTHS',
+    'ONE_YEAR'
+  ];
+
   const normalized = duration.toUpperCase().trim();
-  return durationMap[normalized] || 'ONE_MONTH';
+  if (!validPeriods.includes(normalized)) {
+    console.warn(`    [WARN] Invalid duration "${duration}", defaulting to ONE_MONTH`);
+    return 'ONE_MONTH';
+  }
+  return normalized;
 }
 
 /**
