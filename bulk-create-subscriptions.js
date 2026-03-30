@@ -120,14 +120,16 @@ async function findOrCreateGroup(appId, groupName, existingGroups, dryRun) {
 }
 
 /**
- * Create a subscription
+ * Create a subscription and set its price and localization
  * @param {Object} subscriptionData - Subscription data
  * @param {string} groupId - Subscription group ID
  * @param {boolean} dryRun - If true, don't actually create
+ * @param {Object} options - Additional options
+ * @param {boolean} options.refreshTerritories - Force refresh territories on first call
  */
-async function createSubscription(subscriptionData, groupId, dryRun) {
+async function createSubscription(subscriptionData, groupId, dryRun, options = {}) {
   const subscriptionPeriod = convertDuration(subscriptionData.duration);
-  
+
   const payload = {
     name: subscriptionData.referenceName || subscriptionData.name,
     productId: subscriptionData.productId,
@@ -136,20 +138,160 @@ async function createSubscription(subscriptionData, groupId, dryRun) {
     familySharable: false,
     reviewNote: ''
   };
-  
+
+  const displayName = subscriptionData.displayName || '';
+
   if (dryRun) {
     console.log(`    [DRY-RUN] Would create: ${payload.productId}`);
     console.log(`              Name: ${payload.name}`);
     console.log(`              Period: ${payload.subscriptionPeriod}`);
+    if (subscriptionData.price) {
+      console.log(`              Price (USD): $${subscriptionData.price}`);
+    }
+    if (displayName) {
+      console.log(`              Display Name: ${displayName}`);
+      console.log(`              Description: ${displayName}`);
+    }
     return { success: true, dryRun: true };
   }
-  
+
   try {
     const response = await subscriptionService.createSubscription(payload);
-    console.log(`    [SUCCESS] Created: ${payload.productId}`);
+    const subscriptionId = response.data?.id;
+    console.log(`    [SUCCESS] Created: ${payload.productId} (ID: ${subscriptionId})`);
+
+    // Set prices for all territories if price is specified
+    if (subscriptionData.price && subscriptionId) {
+      try {
+        console.log(`    [PRICING] Setting price $${subscriptionData.price} USD for all territories...`);
+        const priceResults = await subscriptionService.setSubscriptionPricesAllTerritories(
+          subscriptionId,
+          subscriptionData.price,
+          {
+            forceRefreshTerritories: options.refreshTerritories || false,
+            onProgress: (territory, success) => {
+              process.stdout.write(success ? '.' : 'x');
+            }
+          }
+        );
+        console.log(''); // New line after progress dots
+        console.log(`    [PRICING] Set prices: ${priceResults.success}/${priceResults.total} territories`);
+        if (priceResults.failed > 0) {
+          console.log(`    [PRICING] ${priceResults.failed} territories failed`);
+          priceResults.errors.slice(0, 3).forEach(err => {
+            console.log(`      - ${err.territory}: ${err.error}`);
+          });
+        }
+      } catch (priceError) {
+        console.error(`    [PRICING ERROR] Failed to set prices: ${priceError.message}`);
+      }
+    }
+
+    // Create en-US localization using display name for both name and description
+    if (displayName && subscriptionId) {
+      try {
+        console.log(`    [LOCALE] Creating en-US localization...`);
+        await subscriptionService.createSubscriptionLocalization(subscriptionId, {
+          locale: 'en-US',
+          name: displayName,
+          description: displayName
+        });
+        console.log(`    [LOCALE] Created en-US localization: "${displayName}"`);
+      } catch (localeError) {
+        console.error(`    [LOCALE ERROR] Failed to create localization: ${localeError.message}`);
+      }
+    }
+
     return { success: true, data: response.data };
   } catch (error) {
     console.error(`    [ERROR] Failed to create ${payload.productId}: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Update price and localization for an existing subscription
+ * @param {string} subscriptionId - Existing subscription ID
+ * @param {Object} subscriptionData - Subscription data from JSON
+ * @param {boolean} dryRun - If true, don't actually update
+ * @param {Object} options - Additional options
+ * @param {boolean} options.refreshTerritories - Force refresh territories on first call
+ */
+async function updateExistingSubscription(subscriptionId, subscriptionData, dryRun, options = {}) {
+  const displayName = subscriptionData.displayName || '';
+
+  console.log(`    [UPDATE] ${subscriptionData.productId} (ID: ${subscriptionId})`);
+
+  if (dryRun) {
+    if (subscriptionData.price) {
+      console.log(`              Price (USD): $${subscriptionData.price}`);
+    }
+    if (displayName) {
+      console.log(`              Display Name: ${displayName}`);
+      console.log(`              Description: ${displayName}`);
+    }
+    return { success: true, dryRun: true };
+  }
+
+  try {
+    // Update prices for all territories if price is specified
+    if (subscriptionData.price) {
+      try {
+        console.log(`    [PRICING] Setting price $${subscriptionData.price} USD for all territories...`);
+        const priceResults = await subscriptionService.setSubscriptionPricesAllTerritories(
+          subscriptionId,
+          subscriptionData.price,
+          {
+            forceRefreshTerritories: options.refreshTerritories || false,
+            onProgress: (territory, success) => {
+              process.stdout.write(success ? '.' : 'x');
+            }
+          }
+        );
+        console.log(''); // New line after progress dots
+        console.log(`    [PRICING] Set prices: ${priceResults.success}/${priceResults.total} territories`);
+        if (priceResults.failed > 0) {
+          console.log(`    [PRICING] ${priceResults.failed} territories failed`);
+          priceResults.errors.slice(0, 3).forEach(err => {
+            console.log(`      - ${err.territory}: ${err.error}`);
+          });
+        }
+      } catch (priceError) {
+        console.error(`    [PRICING ERROR] Failed to set prices: ${priceError.message}`);
+      }
+    }
+
+    // Update or create en-US localization
+    if (displayName) {
+      try {
+        // Fetch existing localizations to check if en-US already exists
+        const existingLocalizations = await subscriptionService.getSubscriptionLocalizations(subscriptionId);
+        const enUS = existingLocalizations.data?.find(l => l.attributes?.locale === 'en-US');
+
+        if (enUS) {
+          console.log(`    [LOCALE] Updating en-US localization...`);
+          await subscriptionService.updateSubscriptionLocalization(enUS.id, {
+            name: displayName,
+            description: displayName
+          });
+          console.log(`    [LOCALE] Updated en-US localization: "${displayName}"`);
+        } else {
+          console.log(`    [LOCALE] Creating en-US localization...`);
+          await subscriptionService.createSubscriptionLocalization(subscriptionId, {
+            locale: 'en-US',
+            name: displayName,
+            description: displayName
+          });
+          console.log(`    [LOCALE] Created en-US localization: "${displayName}"`);
+        }
+      } catch (localeError) {
+        console.error(`    [LOCALE ERROR] Failed to update localization: ${localeError.message}`);
+      }
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error(`    [ERROR] Failed to update ${subscriptionData.productId}: ${error.message}`);
     return { success: false, error: error.message };
   }
 }
@@ -176,8 +318,10 @@ async function main() {
     process.exit(0);
   }
   
-  // Check for dry-run flag
+  // Check for flags
   const dryRun = args.includes('--dry-run');
+  const refreshTerritories = args.includes('--refresh-territories');
+  const updateExisting = args.includes('--update-existing');
   const jsonPath = args.find(arg => !arg.startsWith('--'));
   
   if (!jsonPath) {
@@ -217,16 +361,28 @@ async function main() {
     const appId = existingData.appId;
     const existingGroups = existingData.subscriptionGroups;
     const existingProductIds = existingData.productIds;
+
+    // Build a map of productId -> subscription record (for updating existing)
+    const subscriptionMap = new Map();
+    if (existingData.subscriptions) {
+      existingData.subscriptions.forEach(sub => {
+        subscriptionMap.set(sub.productId, sub);
+      });
+    }
     
     console.log(`\nApp ID: ${appId}`);
     console.log(`Existing Groups: ${existingGroups.length}`);
     console.log(`Existing Subscriptions: ${existingProductIds.length}`);
     
+    // Track whether territories have been refreshed (only needed once)
+    let territoriesRefreshed = false;
+
     // Track results
     const results = {
       groupsCreated: 0,
       groupsExisting: 0,
       subscriptionsCreated: 0,
+      subscriptionsUpdated: 0,
       subscriptionsExisting: 0,
       subscriptionsFailed: 0
     };
@@ -259,20 +415,48 @@ async function main() {
       // Create subscriptions in this group
       for (const subscription of group.subscriptions) {
         if (subscriptionExists(subscription.productId, existingProductIds)) {
-          console.log(`    [EXISTS] ${subscription.productId}`);
-          results.subscriptionsExisting++;
+          if (updateExisting) {
+            const existingSub = subscriptionMap.get(subscription.productId);
+            if (!existingSub) {
+              console.log(`    [SKIP] ${subscription.productId} - exists but could not find subscription ID`);
+              results.subscriptionsExisting++;
+              continue;
+            }
+
+            // Force refresh territories on the first subscription if flag is set
+            const subOptions = {
+              refreshTerritories: refreshTerritories && !territoriesRefreshed
+            };
+
+            const updateResult = await updateExistingSubscription(existingSub.id, subscription, dryRun, subOptions);
+            if (updateResult.success) {
+              results.subscriptionsUpdated++;
+              territoriesRefreshed = true;
+            } else {
+              results.subscriptionsFailed++;
+            }
+          } else {
+            console.log(`    [EXISTS] ${subscription.productId}`);
+            results.subscriptionsExisting++;
+          }
           continue;
         }
-        
-        const result = await createSubscription(subscription, groupRecord.id, dryRun);
-        
+
+        // Force refresh territories on the first subscription if flag is set
+        const subOptions = {
+          refreshTerritories: refreshTerritories && !territoriesRefreshed
+        };
+
+        const result = await createSubscription(subscription, groupRecord.id, dryRun, subOptions);
+
         if (result.success) {
           results.subscriptionsCreated++;
           existingProductIds.push(subscription.productId);
+          territoriesRefreshed = true;
         } else {
           results.subscriptionsFailed++;
         }
-        
+
         // Add a small delay to avoid rate limiting
         if (!dryRun) {
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -289,6 +473,7 @@ async function main() {
     console.log(`  Already Existed: ${results.groupsExisting}`);
     console.log(`\nSubscriptions:`);
     console.log(`  Created: ${results.subscriptionsCreated}`);
+    console.log(`  Updated: ${results.subscriptionsUpdated}`);
     console.log(`  Already Existed: ${results.subscriptionsExisting}`);
     console.log(`  Failed: ${results.subscriptionsFailed}`);
     

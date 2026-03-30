@@ -75,15 +75,26 @@ class GooglePlayClient {
     await this.ensureInitialized();
 
     try {
-      const response = await this.androidPublisher.monetization.subscriptions.list({
-        packageName
-      });
+      const allSubscriptions = [];
+      let pageToken = undefined;
+
+      do {
+        const params = { packageName };
+        if (pageToken) {
+          params.pageToken = pageToken;
+        }
+
+        const response = await this.androidPublisher.monetization.subscriptions.list(params);
+        const subs = response.data.subscriptions || [];
+        allSubscriptions.push(...subs);
+        pageToken = response.data.nextPageToken;
+      } while (pageToken);
 
       logger.info(`Retrieved subscriptions for package ${packageName}`, {
-        count: response.data.subscriptions?.length || 0
+        count: allSubscriptions.length
       });
 
-      return response.data;
+      return { subscriptions: allSubscriptions };
     } catch (error) {
       this.handleApiError(error, 'getSubscriptions', { packageName });
     }

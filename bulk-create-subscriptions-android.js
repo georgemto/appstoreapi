@@ -72,13 +72,16 @@ Arguments:
   json-file-path    Path to the JSON file (output from generate-product-ids.js)
 
 Options:
-  --package <name>  Android package name (application ID) [required]
-  --dry-run         Preview what would be created without making changes
-  --help, -h        Show this help message
+  --package <name>      Android package name (application ID) [required]
+  --dry-run             Preview what would be created without making changes
+  --activate-existing   Activate base plans for existing subscriptions that are in DRAFT state
+  --help, -h            Show this help message
 
 Examples:
   node bulk-create-subscriptions-android.js product-ids.json --package com.example.app
   node bulk-create-subscriptions-android.js product-ids.json --package com.example.app --dry-run
+  node bulk-create-subscriptions-android.js product-ids.json --package com.example.app --activate-existing
+  node bulk-create-subscriptions-android.js product-ids.json --package com.example.app --activate-existing --dry-run
 
 Process:
   1. Reads the JSON file with subscription data
@@ -228,6 +231,52 @@ async function createSubscription(packageName, sub, dryRun, regionalPricesCache)
 }
 
 /**
+ * Activate base plans for an existing subscription that are in DRAFT state
+ * @param {string} packageName - Android package name
+ * @param {string} productId - Subscription product ID
+ * @param {object} existingSub - Existing subscription object from Google Play
+ * @param {boolean} dryRun - If true, don't actually activate
+ * @returns {boolean} True if any base plans were activated
+ */
+async function activateExistingBasePlans(packageName, productId, existingSub, dryRun) {
+  const basePlans = existingSub?.basePlans || [];
+
+  if (basePlans.length === 0) {
+    console.log(`    [SKIP] ${productId} - no base plans found`);
+    return false;
+  }
+
+  const draftPlans = basePlans.filter(bp => bp.state === 'DRAFT');
+
+  if (draftPlans.length === 0) {
+    console.log(`    [ACTIVE] ${productId} - all base plans already active`);
+    return false;
+  }
+
+  let activatedAny = false;
+
+  for (const bp of draftPlans) {
+    const basePlanId = bp.basePlanId;
+
+    if (dryRun) {
+      console.log(`    [DRY-RUN] Would activate base plan: ${basePlanId} for ${productId}`);
+      activatedAny = true;
+      continue;
+    }
+
+    try {
+      await googlePlayClient.activateBasePlan(packageName, productId, basePlanId);
+      console.log(`    [ACTIVATED] ${productId} base plan: ${basePlanId}`);
+      activatedAny = true;
+    } catch (error) {
+      console.error(`    [ERROR] Failed to activate ${productId} base plan ${basePlanId}: ${error.message}`);
+    }
+  }
+
+  return activatedAny;
+}
+
+/**
  * Main function
  */
 async function main() {
@@ -239,6 +288,7 @@ async function main() {
   }
 
   const dryRun = args.includes('--dry-run');
+  const activateExisting = args.includes('--activate-existing');
 
   // Parse --package argument
   const packageIdx = args.indexOf('--package');
@@ -281,11 +331,14 @@ async function main() {
 
     // Fetch existing subscriptions
     let existingProductIds = [];
+    const existingSubscriptionMap = new Map();
     if (!dryRun) {
       console.log('\nFetching existing subscriptions from Google Play...');
       try {
         const existing = await googlePlayClient.getSubscriptions(packageName);
-        existingProductIds = (existing.subscriptions || []).map(s => s.productId);
+        const subs = existing.subscriptions || [];
+        existingProductIds = subs.map(s => s.productId);
+        subs.forEach(s => existingSubscriptionMap.set(s.productId, s));
         console.log(`Existing Subscriptions: ${existingProductIds.length}`);
       } catch (error) {
         console.warn(`[WARN] Could not fetch existing subscriptions: ${error.message}`);
@@ -296,6 +349,7 @@ async function main() {
     // Track results
     const results = {
       created: 0,
+      activated: 0,
       existing: 0,
       failed: 0
     };
@@ -314,8 +368,18 @@ async function main() {
       for (const sub of group.subscriptions) {
         // Check if already exists
         if (existingProductIds.includes(sub.productId)) {
-          console.log(`    [EXISTS] ${sub.productId}`);
-          results.existing++;
+          if (activateExisting) {
+            const existingSub = existingSubscriptionMap.get(sub.productId);
+            const activatedAny = await activateExistingBasePlans(packageName, sub.productId, existingSub, dryRun);
+            if (activatedAny) {
+              results.activated++;
+            } else {
+              results.existing++;
+            }
+          } else {
+            console.log(`    [EXISTS] ${sub.productId}`);
+            results.existing++;
+          }
           continue;
         }
 
@@ -341,6 +405,7 @@ async function main() {
     console.log('='.repeat(70));
     console.log(`\nSubscriptions:`);
     console.log(`  Created: ${results.created}`);
+    console.log(`  Activated: ${results.activated}`);
     console.log(`  Already Existed: ${results.existing}`);
     console.log(`  Failed: ${results.failed}`);
 
