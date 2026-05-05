@@ -3,30 +3,48 @@ const promotionalOfferService = require('./src/services/promotional-offers');
 const logger = require('./src/utils/logger');
 
 /**
- * Script to get promotional offers for a bundle ID
- * Usage: npm run get-promo-offers <bundle-id> [options]
+ * Script to get promotional offers (subscriptionPromotionalOffers) for a bundle ID.
+ *
+ * For subscription offer codes (a separate Apple resource), use get-offer-codes.js.
+ *
+ * Usage:
+ *   npm run get-promotional-offers -- --bundle-id <bundle-id> [options]
+ *   npm run get-promotional-offers <bundle-id> [options]   (legacy positional)
  */
 async function getPromotionalOffers() {
   try {
-    // Parse command line arguments
     const args = process.argv.slice(2);
-    
+
     if (args.includes('--help') || args.includes('-h') || args.length === 0) {
       showHelp();
       process.exit(0);
     }
 
-    const bundleId = args[0];
-    
+    let bundleId = getArgValue(args, '--bundle-id');
     if (!bundleId) {
-      console.error('❌ Error: Bundle ID is required\n');
+      const firstNonFlag = args.find(a => !a.startsWith('-'));
+      if (firstNonFlag) bundleId = firstNonFlag;
+    }
+
+    if (!bundleId) {
+      console.error('❌ Error: bundle ID is required (--bundle-id <id>)\n');
       showHelp();
       process.exit(1);
     }
 
-    // Parse options
     const referenceName = getArgValue(args, '--reference');
     const limit = parseInt(getArgValue(args, '--limit') || '200');
+    const summaryMode = args.includes('--summary');
+    const csvFlagIndex = args.indexOf('--csv');
+    const csvEnabled = csvFlagIndex !== -1 || args.some(a => a.startsWith('--csv='));
+    let csvOutputPath = null;
+    if (csvFlagIndex !== -1) {
+      const next = args[csvFlagIndex + 1];
+      if (next && !next.startsWith('-')) csvOutputPath = next;
+    } else {
+      const eq = args.find(a => a.startsWith('--csv='));
+      if (eq) csvOutputPath = eq.slice('--csv='.length);
+    }
 
     console.log(`🎁 Fetching promotional offers for bundle ID: ${bundleId}\n`);
     if (referenceName) {
@@ -34,10 +52,10 @@ async function getPromotionalOffers() {
     }
     console.log();
 
-    // Get promotional offers
     const result = await promotionalOfferService.getPromotionalOffersByBundleId(bundleId, {
       referenceName,
-      limit
+      limit,
+      includeOfferCodes: false
     });
 
     console.log('✅ Successfully retrieved promotional offers\n');
@@ -52,16 +70,12 @@ async function getPromotionalOffers() {
 
     if (result.subscriptions.length === 0 || result.totalOffers === 0) {
       console.log('\n⚠️  No promotional offers found');
-      console.log('\nPossible reasons:');
-      console.log('  - No promotional offers have been created for this app');
-      console.log('  - The reference name filter does not match any subscription groups');
-      console.log('  - Subscriptions in this app do not have promotional offers\n');
+      console.log('\nIf you are looking for subscription offer codes, use get-offer-codes.js.\n');
       process.exit(0);
     }
 
-    // Display promotional offers grouped by subscription
     console.log(`\n📋 Promotional Offers (${result.totalOffers} total):\n`);
-    
+
     let globalIndex = 1;
     result.subscriptions.forEach((subscriptionData) => {
       console.log('─'.repeat(80));
@@ -70,38 +84,67 @@ async function getPromotionalOffers() {
       console.log(`   Subscription ID: ${subscriptionData.subscription.id}`);
       console.log(`   Number of Offers: ${subscriptionData.offers.length}\n`);
 
-      subscriptionData.offers.forEach((offer) => {
-        console.log(`   ${globalIndex}. ${offer.name}`);
-        console.log(`      Offer ID: ${offer.id}`);
-        console.log(`      Offer Code: ${offer.offerCode}`);
-        console.log(`      Duration: ${offer.duration}`);
-        console.log(`      Offer Mode: ${offer.offerMode}`);
-        console.log(`      Number of Periods: ${offer.numberOfPeriods}`);
+      const renderOffers = summaryMode
+        ? collapseOffers(subscriptionData.offers)
+        : subscriptionData.offers;
+
+      renderOffers.forEach((offer) => {
+        if (summaryMode) {
+          console.log(`   ${globalIndex}. Offer Mode: ${offer.offerMode}`);
+          console.log(`      Duration: ${offer.duration}`);
+          console.log(`      Number of Periods: ${offer.numberOfPeriods}`);
+          console.log(`      Count: ${offer.offerIds.length}`);
+          console.log(`      Names: ${offer.names.join(', ')}`);
+        } else {
+          console.log(`   ${globalIndex}. ${offer.name}`);
+          console.log(`      Offer ID: ${offer.id}`);
+          console.log(`      Offer Code: ${offer.offerCode}`);
+          console.log(`      Duration: ${offer.duration}`);
+          console.log(`      Offer Mode: ${offer.offerMode}`);
+          console.log(`      Number of Periods: ${offer.numberOfPeriods}`);
+        }
         console.log();
         globalIndex++;
       });
     });
     console.log('═'.repeat(80));
 
-    // Save to file
     const fs = require('fs');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filenamePart = referenceName ? `-${referenceName.replace(/\s+/g, '-')}` : '';
-    const outputPath = `./promotional-offers-${bundleId}${filenamePart}-${timestamp}.json`;
-    
+    const summarySuffix = summaryMode ? '-summary' : '';
+    const outputPath = `./promotional-offers-${bundleId}${filenamePart}${summarySuffix}-${timestamp}.json`;
+
+    const subscriptionsForOutput = summaryMode
+      ? result.subscriptions.map(sub => ({
+          subscription: sub.subscription,
+          offers: collapseOffers(sub.offers)
+        }))
+      : result.subscriptions.map(sub => ({
+          subscription: sub.subscription,
+          offers: sub.offers
+        }));
+
     const outputData = {
       bundleId,
       appName: result.appName,
       referenceName: result.referenceName,
       totalOffers: result.totalOffers,
-      subscriptions: result.subscriptions,
+      summary: summaryMode,
+      subscriptions: subscriptionsForOutput,
       retrievedAt: new Date().toISOString()
     };
 
     fs.writeFileSync(outputPath, JSON.stringify(outputData, null, 2));
     console.log(`\n💾 Results saved to: ${outputPath}`);
 
-    // Create summary table
+    if (csvEnabled) {
+      const csvPath = csvOutputPath || outputPath.replace(/\.json$/, '') + '.csv';
+      const csvBody = summaryMode ? summaryToCsv(outputData) : offersToCsv(outputData);
+      fs.writeFileSync(csvPath, csvBody);
+      console.log(`💾 CSV saved to: ${csvPath}`);
+    }
+
     console.log('\n📊 SUMMARY BY SUBSCRIPTION:\n');
     console.log('─'.repeat(80));
     result.subscriptions.forEach((sub, index) => {
@@ -115,17 +158,11 @@ async function getPromotionalOffers() {
     console.error('\n❌ Error:', error.message);
 
     if (error.statusCode === 401) {
-      console.error('\n🔐 Authentication Error:');
-      console.error('   Please check your App Store Connect API credentials in .env file');
+      console.error('\n🔐 Authentication Error: check API credentials in .env');
     } else if (error.statusCode === 403) {
-      console.error('\n🚫 Authorization Error:');
-      console.error('   Your API key does not have permission to access promotional offers');
+      console.error('\n🚫 Authorization Error: API key lacks permission');
     } else if (error.statusCode === 404 || error.message.includes('not found')) {
-      console.error('\n🔍 Not Found:');
-      console.error(`   App with bundle ID "${args[0]}" not found`);
-      console.error('\n   Tips:');
-      console.error('   - Verify the bundle ID is correct');
-      console.error('   - Run: npm run get-apps to see all available apps');
+      console.error('\n🔍 Not Found: verify the bundle ID is correct');
     }
 
     logger.error('Failed to get promotional offers', {
@@ -144,53 +181,146 @@ function getArgValue(args, flag) {
   return null;
 }
 
+function csvEscape(value) {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (/[",\n\r]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+  return str;
+}
+
+function offersToCsv(data) {
+  const headers = [
+    'Bundle ID',
+    'App Name',
+    'Subscription Name',
+    'Product ID',
+    'Subscription ID',
+    'Offer ID',
+    'Offer Name',
+    'Offer Code',
+    'Offer Mode',
+    'Duration',
+    'Number of Periods'
+  ];
+  const lines = [headers.map(csvEscape).join(',')];
+  for (const sub of data.subscriptions || []) {
+    for (const offer of sub.offers || []) {
+      lines.push([
+        data.bundleId,
+        data.appName,
+        sub.subscription.name,
+        sub.subscription.productId,
+        sub.subscription.id,
+        offer.id,
+        offer.name || '',
+        offer.offerCode || '',
+        offer.offerMode,
+        offer.duration,
+        offer.numberOfPeriods
+      ].map(csvEscape).join(','));
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
+// Collapse promotional offers per subscription by (offerMode, duration, numberOfPeriods).
+function collapseOffers(offers) {
+  const groups = new Map();
+  for (const offer of offers || []) {
+    const key = [
+      offer.offerMode || '',
+      offer.duration || '',
+      offer.numberOfPeriods ?? ''
+    ].join('|');
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        offerMode: offer.offerMode,
+        duration: offer.duration,
+        numberOfPeriods: offer.numberOfPeriods,
+        offerIds: [],
+        names: [],
+        offerCodes: []
+      };
+      groups.set(key, group);
+    }
+    if (offer.id) group.offerIds.push(offer.id);
+    if (offer.name) group.names.push(offer.name);
+    if (offer.offerCode) group.offerCodes.push(offer.offerCode);
+  }
+  return [...groups.values()];
+}
+
+function summaryToCsv(data) {
+  const headers = [
+    'Bundle ID',
+    'App Name',
+    'Subscription Name',
+    'Product ID',
+    'Subscription ID',
+    'Offer Mode',
+    'Duration',
+    'Number of Periods',
+    'Count',
+    'Offer Names',
+    'Offer Codes',
+    'Offer IDs'
+  ];
+  const lines = [headers.map(csvEscape).join(',')];
+  for (const sub of data.subscriptions || []) {
+    for (const offer of sub.offers || []) {
+      lines.push([
+        data.bundleId,
+        data.appName,
+        sub.subscription.name,
+        sub.subscription.productId,
+        sub.subscription.id,
+        offer.offerMode,
+        offer.duration,
+        offer.numberOfPeriods,
+        offer.offerIds.length,
+        (offer.names || []).join('|'),
+        (offer.offerCodes || []).join('|'),
+        (offer.offerIds || []).join('|')
+      ].map(csvEscape).join(','));
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
 function showHelp() {
   console.log(`
 🎁 Get Promotional Offers
 
-Lists all promotional offers for subscriptions in a given bundle ID.
+Lists subscriptionPromotionalOffers for the given bundle ID.
+For subscription offer codes (a separate Apple resource), use:
+  npm run get-offer-codes -- --bundle-id <bundle-id>
 
 Usage:
-  npm run get-promo-offers <bundle-id> [options]
-
-Arguments:
-  bundle-id           App bundle identifier
+  npm run get-promotional-offers -- --bundle-id <bundle-id> [options]
+  npm run get-promotional-offers <bundle-id> [options]    (legacy positional)
 
 Options:
-  --reference <name>  Filter by subscription group reference name
-  --limit <number>    Maximum number of subscriptions to check (default: 200)
-  --help, -h          Show this help message
+  --bundle-id <id>     App bundle identifier (preferred)
+  --reference <name>   Filter by subscription group reference name
+  --limit <number>     Maximum number of subscriptions to check (default: 200)
+  --csv [file]         Also write a CSV (default: <json-output>.csv)
+  --summary            Collapse rows by (offerMode, duration, numberOfPeriods)
+                       and list matching offer IDs / names / codes per group.
+                       Affects console, JSON, and CSV output.
+  --help, -h           Show this help message
 
 Examples:
-  # Get all promotional offers for an app
-  npm run get-promo-offers com.vtech.plus.inapp.ios.test3
-
-  # Filter by reference name
-  npm run get-promo-offers com.vtech.plus.inapp.ios.test3 --reference "Group 1"
-
-  # Limit number of subscriptions checked
-  npm run get-promo-offers com.vtech.plus.inapp.ios.test3 --limit 50
+  npm run get-promotional-offers -- --bundle-id com.example.app
+  npm run get-promotional-offers -- --bundle-id com.example.app --csv
+  npm run get-promotional-offers -- --bundle-id com.example.app --summary --csv
 
 Output:
-  - Console: Formatted list of promotional offers grouped by subscription
-  - File: promotional-offers-<bundle-id>-<timestamp>.json
-
-Information Shown:
-  - App name and bundle ID
-  - Total number of promotional offers
-  - Offers grouped by subscription with:
-    * Subscription name and product ID
-    * Offer name and code
-    * Duration and offer mode
-    * Number of periods
-
-Related Commands:
-  npm run create-promo-offer <subscription-id>    # Create a single offer
-  npm run bulk-create-promo                        # Bulk create offers
-  npm run delete-promo-offer <offer-id>            # Delete an offer
-  npm run get-product-ids <bundle-id>              # List subscriptions
+  - JSON: promotional-offers-<bundle-id>[-summary]-<timestamp>.json
+  - CSV (with --csv): same basename as the JSON. Default mode uses
+    "Offer ID"/"Offer IDs" columns; summary mode uses "Offer IDs" (pipe-separated).
+    delete-promotional-offers.js consumes either.
   `);
 }
 
-// Run the script
 getPromotionalOffers();

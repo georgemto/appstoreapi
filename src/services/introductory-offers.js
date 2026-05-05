@@ -201,7 +201,10 @@ class IntroductoryOfferService {
     } catch (error) {
       logger.error('Failed to create introductory offer:', error);
       
-      if (error.message && error.message.includes('already exists')) {
+      if (error.message && (
+        error.message.includes('already exists') ||
+        error.message.includes('overlaps with existing offer')
+      )) {
         throw new ValidationError('An introductory offer already exists for this subscription and territory');
       }
       
@@ -309,13 +312,19 @@ class IntroductoryOfferService {
    * @returns {object} Deletion result
    */
   async deleteIntroductoryOffer(offerId) {
-    try {
-      if (!offerId) {
-        throw new ValidationError('Introductory offer ID is required');
-      }
+    if (!offerId) {
+      throw new ValidationError('Introductory offer ID is required');
+    }
 
-      await appStoreAPIClient.deleteIntroductoryOffer(offerId);
-      
+    // Use direct HTTP client (axios) instead of the generated SDK so we get
+    // real status codes and the Apple error body — the SDK's superagent path
+    // was returning success without surfacing the Apple-side rejection.
+    // Note: Apple disallows GET_INSTANCE on this resource (returns 403:
+    // "Allowed operations are: CREATE, DELETE, UPDATE"), so post-delete
+    // verification has to happen via the /subscriptions/{id}/introductoryOffers
+    // list endpoint, not by GETing the individual offer.
+    try {
+      await appStoreClient.delete(`/subscriptionIntroductoryOffers/${encodeURIComponent(offerId)}`);
       logger.info(`Deleted introductory offer: ${offerId}`);
       return { success: true, message: 'Introductory offer deleted successfully' };
     } catch (error) {
@@ -338,28 +347,28 @@ class IntroductoryOfferService {
         throw new ValidationError('Subscription ID is required');
       }
 
-      const params = appStoreClient.buildParams(
-        {},
-        ['introductoryOffers'],
+      // Use the dedicated /subscriptions/{id}/introductoryOffers endpoint with
+      // pagination. The previous approach (?include=introductoryOffers on the
+      // subscription) was capped by Apple's default limit[introductoryOffers]
+      // (~10), so subscriptions with many per-territory offers were heavily
+      // under-reported, producing CSVs/JSON with stale or missing IDs that
+      // then 404'd on DELETE.
+      const offers = [];
+      let response = await appStoreClient.get(
+        `${this.endpoints.subscriptions}/${subscriptionId}/introductoryOffers`,
         {
-          subscriptions: ['name', 'productId'],
-          subscriptionIntroductoryOffers: ['startDate', 'endDate', 'duration', 'offerMode', 'numberOfPeriods']
+          'fields[subscriptionIntroductoryOffers]':
+            'startDate,endDate,duration,offerMode,numberOfPeriods,territory,subscriptionPricePoint',
+          include: 'territory',
+          limit: 200
         }
       );
 
-      const response = await appStoreClient.get(
-        `${this.endpoints.subscriptions}/${subscriptionId}`,
-        params
-      );
-
-      // Extract introductory offers from included resources
-      const offers = [];
-      if (response.included) {
-        response.included.forEach(item => {
-          if (item.type === 'subscriptionIntroductoryOffers') {
-            offers.push(item);
-          }
-        });
+      while (response && response.data) {
+        offers.push(...response.data);
+        const nextUrl = response.links?.next;
+        if (!nextUrl) break;
+        response = await appStoreClient.getNextPage(nextUrl);
       }
 
       logger.info(`Retrieved ${offers.length} introductory offers for subscription ${subscriptionId}`);
@@ -435,6 +444,7 @@ class IntroductoryOfferService {
               },
               offers: offers.map(offer => ({
                 id: offer.id,
+                territory: offer.relationships?.territory?.data?.id || null,
                 startDate: offer.attributes?.startDate,
                 endDate: offer.attributes?.endDate,
                 duration: offer.attributes?.duration,
@@ -531,7 +541,7 @@ class IntroductoryOfferService {
 
       // Filter subscriptions to only those belonging to matching groups
       const matchingGroupIds = matchingGroups.map(g => g.id);
-      const filteredSubscriptions = allSubscriptions.filter(sub => {
+      let filteredSubscriptions = allSubscriptions.filter(sub => {
         return matchingGroupIds.includes(sub.groupId);
       });
 
@@ -541,79 +551,254 @@ class IntroductoryOfferService {
         );
       }
 
+      // Optional name-substring filter (case-insensitive). Used when groups mix billing
+      // cadences (e.g. Monthly + Annual) and the caller wants one template to apply only
+      // to a subset — e.g. --match "Monthly" to skip annual subscriptions.
+      if (offerTemplate.nameMatch) {
+        const needle = offerTemplate.nameMatch.toLowerCase();
+        const before = filteredSubscriptions.length;
+        filteredSubscriptions = filteredSubscriptions.filter(
+          sub => (sub.name || '').toLowerCase().includes(needle)
+        );
+        logger.info(`Name filter "${offerTemplate.nameMatch}" reduced ${before} → ${filteredSubscriptions.length} subscriptions`);
+
+        if (filteredSubscriptions.length === 0) {
+          throw new ValidationError(
+            `No subscriptions matched name filter "${offerTemplate.nameMatch}" in ${isAllGroups ? 'any groups' : `group "${referenceName}"`}`
+          );
+        }
+      }
+
+      // Optional subscriptionPeriod filter. More reliable than --match when subscriptions
+      // aren't named by cadence — e.g. planPeriodFilter: ['ONE_MONTH'] keeps only monthly plans.
+      if (offerTemplate.planPeriodFilter && offerTemplate.planPeriodFilter.length > 0) {
+        const allowed = new Set(offerTemplate.planPeriodFilter);
+        const before = filteredSubscriptions.length;
+        filteredSubscriptions = filteredSubscriptions.filter(
+          sub => sub.subscriptionPeriod && allowed.has(sub.subscriptionPeriod)
+        );
+        logger.info(`Plan-period filter [${[...allowed].join(', ')}] reduced ${before} → ${filteredSubscriptions.length} subscriptions`);
+
+        if (filteredSubscriptions.length === 0) {
+          throw new ValidationError(
+            `No subscriptions matched plan-period filter [${[...allowed].join(', ')}] in ${isAllGroups ? 'any groups' : `group "${referenceName}"`}`
+          );
+        }
+      }
+
+      // Optional explicit productId allowlist — e.g. supplied by --from-file
+      // (CSV/JSON output from get-apple-product-ids.js). Useful when the caller
+      // already has a curated list of product IDs and wants to constrain the
+      // bulk run to exactly those, regardless of group / name / plan period.
+      if (offerTemplate.productIdFilter && offerTemplate.productIdFilter.length > 0) {
+        const allowed = new Set(offerTemplate.productIdFilter);
+        const before = filteredSubscriptions.length;
+        filteredSubscriptions = filteredSubscriptions.filter(
+          sub => sub.productId && allowed.has(sub.productId)
+        );
+        logger.info(`Product-ID filter (${allowed.size} ids) reduced ${before} → ${filteredSubscriptions.length} subscriptions`);
+
+        if (filteredSubscriptions.length === 0) {
+          throw new ValidationError(
+            `No subscriptions matched the supplied productId list (${allowed.size} ids) in ${isAllGroups ? 'any groups' : `group "${referenceName}"`}`
+          );
+        }
+      }
+
       logger.info(`Filtered to ${filteredSubscriptions.length} subscriptions in matching group(s)`);
-      
+
+      const onConflict = offerTemplate.onConflict || 'skip';
+      const validConflictModes = ['skip', 'update', 'replace'];
+      if (!validConflictModes.includes(onConflict)) {
+        throw new ValidationError(`Invalid onConflict mode "${onConflict}". Must be one of: ${validConflictModes.join(', ')}`);
+      }
+
       const results = {
         created: [],
+        updated: [],
+        replaced: [],
+        skipped: [],
         failed: [],
         summary: {
           bundleId,
           appName: subscriptionsData.appName,
           referenceName: isAllGroups ? '*' : referenceName,
+          nameMatch: offerTemplate.nameMatch || null,
           matchedGroups: matchingGroups.length,
           matchedSubscriptions: filteredSubscriptions.length,
           territories: offerTemplate.territories,
+          onConflict,
           total: filteredSubscriptions.length * offerTemplate.territories.length,
           succeeded: 0,
+          updated: 0,
+          replaced: 0,
+          skipped: 0,
           failed: 0
         }
+      };
+
+      // Lazy cache of existing offers per subscription.id — populated only when
+      // a conflict occurs, so clean create-only runs pay no extra API cost.
+      const existingOffersCache = new Map();
+      const getExistingForTerritory = async (subscriptionId, territory) => {
+        if (!existingOffersCache.has(subscriptionId)) {
+          const offers = await this.getIntroductoryOffersForSubscription(subscriptionId);
+          existingOffersCache.set(subscriptionId, offers);
+        }
+        return (existingOffersCache.get(subscriptionId) || []).find(
+          o => o.relationships?.territory?.data?.id === territory
+        );
+      };
+      const invalidateCache = (subscriptionId) => existingOffersCache.delete(subscriptionId);
+
+      const buildOfferData = (territory) => {
+        const offerData = {
+          duration: offerTemplate.duration,
+          offerMode: offerTemplate.offerMode,
+          numberOfPeriods: offerTemplate.numberOfPeriods,
+          territory
+        };
+        if (offerTemplate.startDate) offerData.startDate = offerTemplate.startDate;
+        if (offerTemplate.endDate) offerData.endDate = offerTemplate.endDate;
+        if (offerTemplate.subscriptionPricePoint) {
+          offerData.subscriptionPricePoint = this.convertPricePointToTerritory(
+            offerTemplate.subscriptionPricePoint,
+            territory
+          );
+        }
+        return offerData;
       };
 
       // Create introductory offers for each subscription and territory
       for (const subscription of filteredSubscriptions) {
         for (const territory of offerTemplate.territories) {
-          try {
-            const offerData = {
-              duration: offerTemplate.duration,
-              offerMode: offerTemplate.offerMode,
-              numberOfPeriods: offerTemplate.numberOfPeriods,
-              territory: territory
-            };
+          const offerData = buildOfferData(territory);
 
-            // Add optional fields
-            if (offerTemplate.startDate) {
-              offerData.startDate = offerTemplate.startDate;
-            }
-            if (offerTemplate.endDate) {
-              offerData.endDate = offerTemplate.endDate;
-            }
-            if (offerTemplate.subscriptionPricePoint) {
-              // Convert price point to target territory if needed
-              offerData.subscriptionPricePoint = this.convertPricePointToTerritory(
-                offerTemplate.subscriptionPricePoint,
-                territory
-              );
-            }
-
-            const response = await this.createIntroductoryOffer(subscription.id, offerData);
-
-            results.created.push({
-              subscriptionId: subscription.id,
-              subscriptionName: subscription.name,
-              productId: subscription.productId,
-              territory: territory,
-              offerId: response.data?.id
-            });
-
-            results.summary.succeeded++;
-          } catch (error) {
-            logger.warn(`Failed to create offer for subscription ${subscription.id} in ${territory}:`, error.message);
-            
+          const markFailed = (error, code) => {
+            logger.warn(`Failed for subscription ${subscription.id} in ${territory}:`, error.message);
             results.failed.push({
               subscriptionId: subscription.id,
               subscriptionName: subscription.name,
               productId: subscription.productId,
-              territory: territory,
+              territory,
               error: error.message,
-              code: error instanceof ValidationError ? 'VALIDATION_ERROR' : 'API_ERROR'
+              code: code || (error instanceof ValidationError ? 'VALIDATION_ERROR' : 'API_ERROR')
             });
-
             results.summary.failed++;
+          };
+
+          try {
+            const response = await this.createIntroductoryOffer(subscription.id, offerData);
+            results.created.push({
+              subscriptionId: subscription.id,
+              subscriptionName: subscription.name,
+              productId: subscription.productId,
+              territory,
+              offerId: response.data?.id
+            });
+            results.summary.succeeded++;
+          } catch (error) {
+            const isConflict = error instanceof ValidationError
+              && typeof error.message === 'string'
+              && error.message.includes('already exists');
+
+            if (!isConflict) {
+              markFailed(error);
+              continue;
+            }
+
+            // Conflict: dispatch on onConflict mode
+            if (onConflict === 'skip') {
+              results.skipped.push({
+                subscriptionId: subscription.id,
+                subscriptionName: subscription.name,
+                productId: subscription.productId,
+                territory,
+                reason: 'offer already exists'
+              });
+              results.summary.skipped++;
+              continue;
+            }
+
+            let existing;
+            try {
+              existing = await getExistingForTerritory(subscription.id, territory);
+            } catch (lookupError) {
+              markFailed(new Error(`conflict detected but lookup failed: ${lookupError.message}`), 'LOOKUP_FAILED');
+              continue;
+            }
+
+            if (!existing) {
+              markFailed(new Error('conflict reported by API but existing offer not found for this territory'), 'CONFLICT_UNRESOLVED');
+              continue;
+            }
+
+            if (onConflict === 'update') {
+              if (!offerTemplate.startDate && !offerTemplate.endDate) {
+                markFailed(new Error('--on-conflict update requires --start-date and/or --end-date in the template'), 'NO_UPDATE_FIELDS');
+                continue;
+              }
+              try {
+                const updated = await this.updateIntroductoryOffer(existing.id, {
+                  startDate: offerTemplate.startDate,
+                  endDate: offerTemplate.endDate
+                });
+                results.updated.push({
+                  subscriptionId: subscription.id,
+                  subscriptionName: subscription.name,
+                  productId: subscription.productId,
+                  territory,
+                  offerId: existing.id,
+                  startDate: offerTemplate.startDate || null,
+                  endDate: offerTemplate.endDate || null
+                });
+                results.summary.updated++;
+                // Refresh cached offer with new attributes (best-effort)
+                if (updated?.data?.attributes) {
+                  Object.assign(existing.attributes || (existing.attributes = {}), updated.data.attributes);
+                }
+              } catch (updateError) {
+                markFailed(updateError, 'UPDATE_FAILED');
+              }
+              continue;
+            }
+
+            if (onConflict === 'replace') {
+              try {
+                await this.deleteIntroductoryOffer(existing.id);
+              } catch (deleteError) {
+                markFailed(new Error(`replace: delete failed — ${deleteError.message}`), 'DELETE_FAILED');
+                continue;
+              }
+              // Delete succeeded; invalidate cache so a retry on another territory re-fetches.
+              invalidateCache(subscription.id);
+
+              try {
+                const response = await this.createIntroductoryOffer(subscription.id, offerData);
+                results.replaced.push({
+                  subscriptionId: subscription.id,
+                  subscriptionName: subscription.name,
+                  productId: subscription.productId,
+                  territory,
+                  oldOfferId: existing.id,
+                  offerId: response.data?.id
+                });
+                results.summary.replaced++;
+              } catch (recreateError) {
+                markFailed(new Error(`replace: delete succeeded but recreate failed — ${recreateError.message}`), 'RECREATE_FAILED');
+              }
+            }
           }
         }
       }
 
-      logger.info(`Bulk creation completed: ${results.summary.succeeded} succeeded, ${results.summary.failed} failed`);
+      logger.info('Bulk creation completed', {
+        succeeded: results.summary.succeeded,
+        updated: results.summary.updated,
+        replaced: results.summary.replaced,
+        skipped: results.summary.skipped,
+        failed: results.summary.failed
+      });
 
       return results;
     } catch (error) {

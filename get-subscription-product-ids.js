@@ -16,14 +16,14 @@ async function getSubscriptionProductIds() {
     if (!bundleId) {
       console.error('❌ Error: Bundle ID is required\n');
       console.log('Usage:');
-      console.log('  npm run get-product-ids <bundle-id> [options]\n');
+      console.log('  npm run get-subscription-product-ids <bundle-id> [options]\n');
       console.log('Options:');
       console.log('  --no-cache    Skip database cache, fetch fresh from API');
       console.log('  --no-save     Don\'t save to database\n');
       console.log('Examples:');
-      console.log('  npm run get-product-ids com.vtech.plus.inapp.ios.test3');
-      console.log('  npm run get-product-ids com.vtech.plus.inapp.ios.test3 --no-cache');
-      console.log('  npm run get-product-ids com.example.myapp --no-save\n');
+      console.log('  npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3');
+      console.log('  npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3 --no-cache');
+      console.log('  npm run get-subscription-product-ids com.example.myapp --no-save\n');
       process.exit(1);
     }
 
@@ -129,7 +129,7 @@ async function getSubscriptionProductIds() {
       console.error('\n   Tips:');
       console.error('   - Verify the bundle ID is correct');
       console.error('   - Check that the app exists in your App Store Connect account');
-      console.error('   - Run: npm run get-apps to see all available apps');
+      console.error('   - Run: npm run get-all-apps to see all available apps');
     }
 
     logger.error('Failed to retrieve subscription product IDs', {
@@ -149,7 +149,7 @@ Retrieves all in-app subscription product IDs for an app given its bundle ID.
 Results are cached in SQLite database for faster subsequent access.
 
 Usage:
-  npm run get-product-ids <bundle-id> [options]
+  npm run get-subscription-product-ids <bundle-id> [options]
 
 Arguments:
   bundle-id       The bundle identifier of the app (e.g., com.example.app)
@@ -160,9 +160,9 @@ Options:
   --help, -h      Show this help message
 
 Examples:
-  npm run get-product-ids com.vtech.plus.inapp.ios.test3
-  npm run get-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
-  npm run get-product-ids com.example.myapp --no-save
+  npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3
+  npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
+  npm run get-subscription-product-ids com.example.myapp --no-save
 
 Output:
   - Console: Formatted list of product IDs and subscription details
@@ -175,7 +175,7 @@ Database Cache:
   - Use --no-cache to force fresh fetch from API
 
 Related Commands:
-  npm run get-apps                     # List all apps with their bundle IDs
+  npm run get-all-apps                     # List all apps with their bundle IDs
   npm run debug-auth                   # Test API authentication
   `);
   process.exit(0);

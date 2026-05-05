@@ -21,9 +21,12 @@ jest.mock('../src/config/appstore', () => ({
     keyId: 'test-key-id',
     privateKeyPath: './test-key.p8',
     issuerId: 'test-issuer-id',
+    apiBaseUrl: 'https://api.appstoreconnect.apple.com/v1',
     endpoints: {
       subscriptions: '/subscriptions',
-      subscriptionGroups: '/subscriptionGroups'
+      subscriptionGroups: '/subscriptionGroups',
+      promotionalOffers: '/subscriptionPromotionalOffers',
+      introductoryOffers: '/subscriptionIntroductoryOffers'
     },
     rateLimiting: {
       windowMs: 900000,
@@ -302,6 +305,675 @@ describe('Subscription API Endpoints', () => {
       // For now, we'll just verify the endpoint works normally
       const response = await request(app).get('/api/subscriptions/health');
       expect(response.status).toBe(200);
+    });
+  });
+
+  describe('GET /api/subscriptions/:id/localizations', () => {
+    const validId = '12345678-1234-5678-9012-123456789012';
+
+    it('should return all localizations for a subscription', async () => {
+      const mockLocalizations = {
+        data: [
+          {
+            id: 'localization-id-1',
+            type: 'subscriptionLocalizations',
+            attributes: {
+              locale: 'en-US',
+              name: 'Premium Plan',
+              description: 'Access all features',
+              state: 'APPROVED'
+            }
+          },
+          {
+            id: 'localization-id-2',
+            type: 'subscriptionLocalizations',
+            attributes: {
+              locale: 'de-DE',
+              name: 'Premium Abo',
+              description: 'Zugang zu allen Funktionen',
+              state: 'APPROVED'
+            }
+          }
+        ],
+        meta: { paging: { total: 2 } }
+      };
+
+      subscriptionService.getSubscriptionLocalizations.mockResolvedValue(mockLocalizations);
+
+      const response = await request(app).get(`/api/subscriptions/${validId}/localizations`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data).toEqual(mockLocalizations.data);
+      expect(subscriptionService.getSubscriptionLocalizations).toHaveBeenCalledWith(validId);
+    });
+
+    it('should return 400 for invalid subscription UUID', async () => {
+      const response = await request(app).get('/api/subscriptions/invalid-id/localizations');
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('valid UUID');
+    });
+
+    it('should handle service errors', async () => {
+      const error = new Error('Subscription not found');
+      error.statusCode = 404;
+
+      subscriptionService.getSubscriptionLocalizations.mockRejectedValue(error);
+
+      const response = await request(app).get(`/api/subscriptions/${validId}/localizations`);
+
+      expect(response.status).toBe(404);
+      expect(response.body.success).toBe(false);
+    });
+  });
+
+  describe('POST /api/subscriptions/:id/localizations', () => {
+    const validId = '12345678-1234-5678-9012-123456789012';
+
+    it('should create a new localization', async () => {
+      const localizationData = {
+        locale: 'fr-FR',
+        name: 'Abonnement Premium',
+        description: 'Acces a toutes les fonctions'
+      };
+
+      const mockCreatedLocalization = {
+        data: {
+          id: 'new-localization-id',
+          type: 'subscriptionLocalizations',
+          attributes: {
+            ...localizationData,
+            state: 'PREPARE_FOR_SUBMISSION'
+          }
+        }
+      };
+
+      subscriptionService.createSubscriptionLocalization.mockResolvedValue(mockCreatedLocalization);
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(localizationData);
+
+      expect(response.status).toBe(201);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data).toEqual(mockCreatedLocalization.data);
+      expect(response.body.message).toBe('Subscription localization created successfully');
+      expect(subscriptionService.createSubscriptionLocalization).toHaveBeenCalledWith(validId, localizationData);
+    });
+
+    it('should create localization with locale without region code', async () => {
+      const localizationData = {
+        locale: 'ja',
+        name: 'Premium'
+      };
+
+      const mockCreatedLocalization = {
+        data: {
+          id: 'new-localization-id',
+          type: 'subscriptionLocalizations',
+          attributes: localizationData
+        }
+      };
+
+      subscriptionService.createSubscriptionLocalization.mockResolvedValue(mockCreatedLocalization);
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(localizationData);
+
+      expect(response.status).toBe(201);
+      expect(response.body.success).toBe(true);
+    });
+
+    it('should return 400 for missing locale', async () => {
+      const invalidData = {
+        name: 'Premium Plan'
+        // Missing locale
+      };
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(invalidData);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('locale');
+    });
+
+    it('should return 400 for missing name', async () => {
+      const invalidData = {
+        locale: 'en-US'
+        // Missing name
+      };
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(invalidData);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('name');
+    });
+
+    it('should return 400 for invalid locale format', async () => {
+      const invalidData = {
+        locale: 'invalid-locale-format',
+        name: 'Premium Plan'
+      };
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(invalidData);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('Locale');
+    });
+
+    it('should return 400 for name exceeding 30 characters', async () => {
+      const invalidData = {
+        locale: 'en-US',
+        name: 'This name is way too long and exceeds the thirty character limit'
+      };
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(invalidData);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('30 characters');
+    });
+
+    it('should return 400 for description exceeding 45 characters', async () => {
+      const invalidData = {
+        locale: 'en-US',
+        name: 'Premium Plan',
+        description: 'This description is way too long and exceeds the forty-five character limit for subscriptions'
+      };
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(invalidData);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('45 characters');
+    });
+
+    it('should return 400 for invalid subscription UUID', async () => {
+      const validData = {
+        locale: 'en-US',
+        name: 'Premium Plan'
+      };
+
+      const response = await request(app)
+        .post('/api/subscriptions/invalid-id/localizations')
+        .send(validData);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('valid UUID');
+    });
+
+    it('should allow empty description', async () => {
+      const localizationData = {
+        locale: 'en-US',
+        name: 'Premium Plan',
+        description: ''
+      };
+
+      const mockCreatedLocalization = {
+        data: {
+          id: 'new-localization-id',
+          type: 'subscriptionLocalizations',
+          attributes: localizationData
+        }
+      };
+
+      subscriptionService.createSubscriptionLocalization.mockResolvedValue(mockCreatedLocalization);
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(localizationData);
+
+      expect(response.status).toBe(201);
+      expect(response.body.success).toBe(true);
+    });
+  });
+
+  describe('GET /api/subscriptions/localizations/:localizationId', () => {
+    const validLocalizationId = '12345678-1234-5678-9012-123456789012';
+
+    it('should return localization by ID', async () => {
+      const mockLocalization = {
+        data: {
+          id: validLocalizationId,
+          type: 'subscriptionLocalizations',
+          attributes: {
+            locale: 'en-US',
+            name: 'Premium Plan',
+            description: 'Access all features',
+            state: 'APPROVED'
+          }
+        }
+      };
+
+      subscriptionService.getSubscriptionLocalizationById.mockResolvedValue(mockLocalization);
+
+      const response = await request(app).get(`/api/subscriptions/localizations/${validLocalizationId}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data).toEqual(mockLocalization.data);
+      expect(subscriptionService.getSubscriptionLocalizationById).toHaveBeenCalledWith(validLocalizationId);
+    });
+
+    it('should return 400 for invalid localization UUID', async () => {
+      const response = await request(app).get('/api/subscriptions/localizations/invalid-id');
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('valid UUID');
+    });
+
+    it('should return 404 when localization not found', async () => {
+      const error = new Error('Localization not found');
+      error.statusCode = 404;
+
+      subscriptionService.getSubscriptionLocalizationById.mockRejectedValue(error);
+
+      const response = await request(app).get(`/api/subscriptions/localizations/${validLocalizationId}`);
+
+      expect(response.status).toBe(404);
+      expect(response.body.success).toBe(false);
+    });
+  });
+
+  describe('PATCH /api/subscriptions/localizations/:localizationId', () => {
+    const validLocalizationId = '12345678-1234-5678-9012-123456789012';
+
+    it('should update localization name', async () => {
+      const updateData = {
+        name: 'Updated Premium Plan'
+      };
+
+      const mockUpdatedLocalization = {
+        data: {
+          id: validLocalizationId,
+          type: 'subscriptionLocalizations',
+          attributes: {
+            locale: 'en-US',
+            name: 'Updated Premium Plan',
+            description: 'Access all features',
+            state: 'APPROVED'
+          }
+        }
+      };
+
+      subscriptionService.updateSubscriptionLocalization.mockResolvedValue(mockUpdatedLocalization);
+
+      const response = await request(app)
+        .patch(`/api/subscriptions/localizations/${validLocalizationId}`)
+        .send(updateData);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data).toEqual(mockUpdatedLocalization.data);
+      expect(response.body.message).toBe('Subscription localization updated successfully');
+      expect(subscriptionService.updateSubscriptionLocalization).toHaveBeenCalledWith(validLocalizationId, updateData);
+    });
+
+    it('should update localization description', async () => {
+      const updateData = {
+        description: 'New description'
+      };
+
+      const mockUpdatedLocalization = {
+        data: {
+          id: validLocalizationId,
+          type: 'subscriptionLocalizations',
+          attributes: {
+            locale: 'en-US',
+            name: 'Premium Plan',
+            description: 'New description',
+            state: 'APPROVED'
+          }
+        }
+      };
+
+      subscriptionService.updateSubscriptionLocalization.mockResolvedValue(mockUpdatedLocalization);
+
+      const response = await request(app)
+        .patch(`/api/subscriptions/localizations/${validLocalizationId}`)
+        .send(updateData);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(subscriptionService.updateSubscriptionLocalization).toHaveBeenCalledWith(validLocalizationId, updateData);
+    });
+
+    it('should update both name and description', async () => {
+      const updateData = {
+        name: 'New Name',
+        description: 'New description'
+      };
+
+      const mockUpdatedLocalization = {
+        data: {
+          id: validLocalizationId,
+          type: 'subscriptionLocalizations',
+          attributes: {
+            locale: 'en-US',
+            ...updateData,
+            state: 'APPROVED'
+          }
+        }
+      };
+
+      subscriptionService.updateSubscriptionLocalization.mockResolvedValue(mockUpdatedLocalization);
+
+      const response = await request(app)
+        .patch(`/api/subscriptions/localizations/${validLocalizationId}`)
+        .send(updateData);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+    });
+
+    it('should return 400 for empty update data', async () => {
+      const response = await request(app)
+        .patch(`/api/subscriptions/localizations/${validLocalizationId}`)
+        .send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('At least one field');
+    });
+
+    it('should return 400 for name exceeding 30 characters', async () => {
+      const invalidData = {
+        name: 'This name is way too long and exceeds the thirty character limit'
+      };
+
+      const response = await request(app)
+        .patch(`/api/subscriptions/localizations/${validLocalizationId}`)
+        .send(invalidData);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('30 characters');
+    });
+
+    it('should return 400 for description exceeding 45 characters', async () => {
+      const invalidData = {
+        description: 'This description is way too long and exceeds the forty-five character limit for subscriptions'
+      };
+
+      const response = await request(app)
+        .patch(`/api/subscriptions/localizations/${validLocalizationId}`)
+        .send(invalidData);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('45 characters');
+    });
+
+    it('should return 400 for invalid localization UUID', async () => {
+      const validData = {
+        name: 'Updated Name'
+      };
+
+      const response = await request(app)
+        .patch('/api/subscriptions/localizations/invalid-id')
+        .send(validData);
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('valid UUID');
+    });
+
+    it('should return 404 when localization not found', async () => {
+      const error = new Error('Localization not found');
+      error.statusCode = 404;
+
+      subscriptionService.updateSubscriptionLocalization.mockRejectedValue(error);
+
+      const response = await request(app)
+        .patch(`/api/subscriptions/localizations/${validLocalizationId}`)
+        .send({ name: 'New Name' });
+
+      expect(response.status).toBe(404);
+      expect(response.body.success).toBe(false);
+    });
+
+    it('should allow empty description in update', async () => {
+      const updateData = {
+        description: ''
+      };
+
+      const mockUpdatedLocalization = {
+        data: {
+          id: validLocalizationId,
+          type: 'subscriptionLocalizations',
+          attributes: {
+            locale: 'en-US',
+            name: 'Premium Plan',
+            description: '',
+            state: 'APPROVED'
+          }
+        }
+      };
+
+      subscriptionService.updateSubscriptionLocalization.mockResolvedValue(mockUpdatedLocalization);
+
+      const response = await request(app)
+        .patch(`/api/subscriptions/localizations/${validLocalizationId}`)
+        .send(updateData);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+    });
+  });
+
+  describe('DELETE /api/subscriptions/localizations/:localizationId', () => {
+    const validLocalizationId = '12345678-1234-5678-9012-123456789012';
+
+    it('should delete a localization', async () => {
+      const mockResult = {
+        success: true,
+        message: 'Subscription localization deleted successfully'
+      };
+
+      subscriptionService.deleteSubscriptionLocalization.mockResolvedValue(mockResult);
+
+      const response = await request(app).delete(`/api/subscriptions/localizations/${validLocalizationId}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.message).toBe(mockResult.message);
+      expect(subscriptionService.deleteSubscriptionLocalization).toHaveBeenCalledWith(validLocalizationId);
+    });
+
+    it('should return 400 for invalid localization UUID', async () => {
+      const response = await request(app).delete('/api/subscriptions/localizations/invalid-id');
+
+      expect(response.status).toBe(400);
+      expect(response.body.success).toBe(false);
+      expect(response.body.error.message).toContain('valid UUID');
+    });
+
+    it('should return 404 when localization not found', async () => {
+      const error = new Error('Localization not found');
+      error.statusCode = 404;
+
+      subscriptionService.deleteSubscriptionLocalization.mockRejectedValue(error);
+
+      const response = await request(app).delete(`/api/subscriptions/localizations/${validLocalizationId}`);
+
+      expect(response.status).toBe(404);
+      expect(response.body.success).toBe(false);
+    });
+  });
+
+  describe('Localization Validation Edge Cases', () => {
+    const validId = '12345678-1234-5678-9012-123456789012';
+
+    it('should accept valid locale formats', async () => {
+      const validLocales = ['en', 'en-US', 'de-DE', 'ja', 'zh-CN', 'pt-BR'];
+
+      for (const locale of validLocales) {
+        const localizationData = {
+          locale,
+          name: 'Test Plan'
+        };
+
+        const mockResponse = {
+          data: {
+            id: 'test-id',
+            type: 'subscriptionLocalizations',
+            attributes: localizationData
+          }
+        };
+
+        subscriptionService.createSubscriptionLocalization.mockResolvedValue(mockResponse);
+
+        const response = await request(app)
+          .post(`/api/subscriptions/${validId}/localizations`)
+          .send(localizationData);
+
+        expect(response.status).toBe(201);
+      }
+    });
+
+    it('should reject invalid locale formats', async () => {
+      const invalidLocales = ['en_US', 'english', 'EN-US', 'e', 'en-usa', '123'];
+
+      for (const locale of invalidLocales) {
+        const localizationData = {
+          locale,
+          name: 'Test Plan'
+        };
+
+        const response = await request(app)
+          .post(`/api/subscriptions/${validId}/localizations`)
+          .send(localizationData);
+
+        expect(response.status).toBe(400);
+        expect(response.body.error.message).toContain('Locale');
+      }
+    });
+
+    it('should accept name at exactly 30 characters', async () => {
+      const localizationData = {
+        locale: 'en-US',
+        name: 'A'.repeat(30)  // Exactly 30 characters
+      };
+
+      const mockResponse = {
+        data: {
+          id: 'test-id',
+          type: 'subscriptionLocalizations',
+          attributes: localizationData
+        }
+      };
+
+      subscriptionService.createSubscriptionLocalization.mockResolvedValue(mockResponse);
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(localizationData);
+
+      expect(response.status).toBe(201);
+    });
+
+    it('should accept description at exactly 45 characters', async () => {
+      const localizationData = {
+        locale: 'en-US',
+        name: 'Test Plan',
+        description: 'A'.repeat(45)  // Exactly 45 characters
+      };
+
+      const mockResponse = {
+        data: {
+          id: 'test-id',
+          type: 'subscriptionLocalizations',
+          attributes: localizationData
+        }
+      };
+
+      subscriptionService.createSubscriptionLocalization.mockResolvedValue(mockResponse);
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(localizationData);
+
+      expect(response.status).toBe(201);
+    });
+
+    it('should strip unknown fields from create request', async () => {
+      const localizationData = {
+        locale: 'en-US',
+        name: 'Test Plan',
+        unknownField: 'should be stripped',
+        anotherUnknown: 123
+      };
+
+      const mockResponse = {
+        data: {
+          id: 'test-id',
+          type: 'subscriptionLocalizations',
+          attributes: {
+            locale: 'en-US',
+            name: 'Test Plan'
+          }
+        }
+      };
+
+      subscriptionService.createSubscriptionLocalization.mockResolvedValue(mockResponse);
+
+      const response = await request(app)
+        .post(`/api/subscriptions/${validId}/localizations`)
+        .send(localizationData);
+
+      expect(response.status).toBe(201);
+      expect(subscriptionService.createSubscriptionLocalization).toHaveBeenCalledWith(
+        validId,
+        expect.not.objectContaining({ unknownField: expect.anything() })
+      );
+    });
+
+    it('should strip unknown fields from update request', async () => {
+      const localizationId = '12345678-1234-5678-9012-123456789012';
+      const updateData = {
+        name: 'Updated Name',
+        unknownField: 'should be stripped'
+      };
+
+      const mockResponse = {
+        data: {
+          id: localizationId,
+          type: 'subscriptionLocalizations',
+          attributes: {
+            locale: 'en-US',
+            name: 'Updated Name'
+          }
+        }
+      };
+
+      subscriptionService.updateSubscriptionLocalization.mockResolvedValue(mockResponse);
+
+      const response = await request(app)
+        .patch(`/api/subscriptions/localizations/${localizationId}`)
+        .send(updateData);
+
+      expect(response.status).toBe(200);
+      expect(subscriptionService.updateSubscriptionLocalization).toHaveBeenCalledWith(
+        localizationId,
+        expect.not.objectContaining({ unknownField: expect.anything() })
+      );
     });
   });
 });

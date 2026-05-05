@@ -41,7 +41,7 @@ describe('Introductory Offers API Endpoints', () => {
   });
 
   describe('POST /api/introductory-offers', () => {
-    const validSubscriptionId = '12345678-1234-5678-9012-123456789012';
+    const validSubscriptionId = '1234567890';
 
     it('should create an introductory offer', async () => {
       const offerData = {
@@ -136,9 +136,9 @@ describe('Introductory Offers API Endpoints', () => {
       expect(response.body.error.message).toContain('required');
     });
 
-    it('should return 400 for invalid UUID', async () => {
+    it('should return 400 for invalid subscription ID', async () => {
       const invalidData = {
-        subscriptionId: 'invalid-uuid',
+        subscriptionId: 'invalid-id',
         territory: 'USA',
         duration: 'ONE_MONTH',
         offerMode: 'FREE_TRIAL',
@@ -151,7 +151,7 @@ describe('Introductory Offers API Endpoints', () => {
       
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
-      expect(response.body.error.message).toContain('valid UUID');
+      expect(response.body.error.message).toContain('numeric string');
     });
 
     it('should return 400 for invalid duration', async () => {
@@ -573,7 +573,7 @@ describe('Introductory Offers API Endpoints', () => {
   });
 
   describe('Validation Edge Cases', () => {
-    const validSubscriptionId = '12345678-1234-5678-9012-123456789012';
+    const validSubscriptionId = '1234567890';
 
     it('should accept all valid duration values', async () => {
       const validDurations = ['THREE_DAYS', 'ONE_WEEK', 'TWO_WEEKS', 'ONE_MONTH', 

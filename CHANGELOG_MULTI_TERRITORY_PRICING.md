@@ -168,7 +168,7 @@ const newPricePointId = Buffer.from(JSON.stringify(newPricePointData))
 
 ```bash
 # Old way (still works)
-npm run create-promo-offer <id> \
+npm run create-promotional-offer <id> \
   --name "USA Sale" \
   --mode PAY_AS_YOU_GO \
   --price-point <usa-price-point> \
@@ -181,7 +181,7 @@ npm run create-promo-offer <id> \
 
 ```bash
 # New way (automatically converts price tier)
-npm run create-promo-offer <id> \
+npm run create-promotional-offer <id> \
   --name "Global Sale" \
   --mode PAY_AS_YOU_GO \
   --price-point <usa-price-point> \
@@ -231,9 +231,9 @@ Confirmed price point IDs match Apple's API format (no padding).
 
 ```bash
 # Had to create separate offers for each territory
-npm run create-promo-offer <id> --territories USA --price-point <usa-point>
-npm run create-promo-offer <id> --territories GBR --price-point <gbr-point>
-npm run create-promo-offer <id> --territories CAN --price-point <can-point>
+npm run create-promotional-offer <id> --territories USA --price-point <usa-point>
+npm run create-promotional-offer <id> --territories GBR --price-point <gbr-point>
+npm run create-promotional-offer <id> --territories CAN --price-point <can-point>
 # ... repeat for each territory
 ```
 
@@ -241,7 +241,7 @@ npm run create-promo-offer <id> --territories CAN --price-point <can-point>
 
 ```bash
 # One command for all territories
-npm run create-promo-offer <id> \
+npm run create-promotional-offer <id> \
   --territories USA,GBR,CAN,AUS,EUR,JPN \
   --price-point <usa-point>
 ```

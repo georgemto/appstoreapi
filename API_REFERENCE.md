@@ -747,14 +747,14 @@ In addition to the REST API, several CLI scripts are available:
 
 ### Get All Apps
 ```bash
-npm run get-apps
-npm run get-apps -- --limit=100
+npm run get-all-apps
+npm run get-all-apps -- --limit=100
 ```
 
 ### Get Subscription Product IDs
 ```bash
-npm run get-product-ids com.vtech.plus.inapp.ios.test3
-npm run get-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
+npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3
+npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
 ```
 
 ### Debug Authentication

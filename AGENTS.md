@@ -28,9 +28,9 @@
 - **NEVER use any other bundle IDs for iOS testing**, including:
   - `com.vtech.plus` (production app with live subscriptions)
   - `com.vtech.plus.uat` (UAT environment)
-  - `com.vtech.plus.inapp.test2` (other test environment)
+  - `com.vtech.plus.inapp.test32` (other test environment)
   - `com.vtech.vcare.uat` (other app)
 
 ### Android Testing
-- **CRITICAL: ONLY use application ID `com.vtech.plus.inapp.test` for ALL Android testing purposes**
+- **CRITICAL: ONLY use application ID `com.vtech.plus.inapp.test3` for ALL Android testing purposes**
 - **NEVER use any other application IDs for Android testing**

@@ -37,26 +37,26 @@ This guide explains how to retrieve all apps from App Store Connect API using th
 ### Quick Start
 ```bash
 # Get all apps (default: 50 apps)
-npm run get-apps
+npm run get-all-apps
 
 # Show help
-npm run get-apps -- --help
+npm run get-all-apps -- --help
 ```
 
 ### Advanced Usage
 
 ```bash
 # Get specific number of apps
-npm run get-apps -- --limit=10
+npm run get-all-apps -- --limit=10
 
 # Get all apps (max 200)
-npm run get-apps -- --limit=200
+npm run get-all-apps -- --limit=200
 
 # Include app store versions (slower but more data)
-npm run get-apps -- --include-versions
+npm run get-all-apps -- --include-versions
 
 # Combine options
-npm run get-apps -- --limit=100 --include-versions
+npm run get-all-apps -- --limit=100 --include-versions
 ```
 
 ### Using the REST API
@@ -139,7 +139,7 @@ The script produces two outputs:
 
 ### Timeout Errors
 If you still get timeouts:
-1. Reduce the limit: `npm run get-apps -- --limit=10`
+1. Reduce the limit: `npm run get-all-apps -- --limit=10`
 2. Remove includes: Don't use `--include-versions`
 3. Check your network connection
 4. Verify Apple's API status
@@ -177,22 +177,22 @@ npm run debug-auth
 
 ### Example 1: Quick Test
 ```bash
-npm run get-apps -- --limit=5
+npm run get-all-apps -- --limit=5
 ```
 
 ### Example 2: Get All Apps
 ```bash
-npm run get-apps -- --limit=200
+npm run get-all-apps -- --limit=200
 ```
 
 ### Example 3: Get Apps with Versions
 ```bash
-npm run get-apps -- --limit=50 --include-versions
+npm run get-all-apps -- --limit=50 --include-versions
 ```
 
 ### Example 4: Process JSON Output
 ```bash
-npm run get-apps
+npm run get-all-apps
 cat apps-output.json | jq '.data[] | {name: .attributes.name, bundleId: .attributes.bundleId}'
 ```
 

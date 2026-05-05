@@ -171,6 +171,77 @@ class AppStoreConnectClient {
 
     return params;
   }
+
+  /**
+   * Fetch a paginated next page using the full URL
+   * @param {string} nextUrl - Full URL for the next page
+   * @returns {Object} Response data
+   */
+  async getNextPage(nextUrl) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= this.retryCount; attempt++) {
+      try {
+        const headers = authService.getAuthHeaders();
+        
+        const requestConfig = {
+          method: 'GET',
+          url: nextUrl,
+          headers,
+          timeout: 60000
+        };
+
+        logger.info(`Fetching next page`, { attempt, url: nextUrl });
+
+        const response = await axios(requestConfig);
+        
+        logger.info(`Next page request successful`, { 
+          status: response.status,
+          dataLength: response.data?.data?.length,
+          hasNext: !!response.data?.links?.next
+        });
+
+        return response.data;
+      } catch (error) {
+        lastError = error;
+        
+        if (error.response) {
+          const { status, data } = error.response;
+          
+          if (status === 429) {
+            const retryAfter = error.response.headers['retry-after'];
+            const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : this.retryDelay * attempt;
+            
+            if (attempt < this.retryCount) {
+              logger.warn(`Rate limited on next page. Retrying after ${waitTime}ms`);
+              await this.sleep(waitTime);
+              continue;
+            }
+          }
+
+          if (status >= 400 && status < 500 && status !== 429) {
+            throw new AppleAPIError(
+              data?.errors?.[0]?.detail || 'Client error',
+              data?.errors?.[0]?.code,
+              status
+            );
+          }
+
+          if (status >= 500 && attempt < this.retryCount) {
+            await this.sleep(this.retryDelay * attempt);
+            continue;
+          }
+        }
+
+        if (attempt < this.retryCount) {
+          await this.sleep(this.retryDelay * attempt);
+          continue;
+        }
+      }
+    }
+
+    throw lastError || new AppleAPIError('Failed to fetch next page');
+  }
 }
 
 // Export singleton instance

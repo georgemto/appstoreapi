@@ -318,71 +318,69 @@ class AppService {
       const appId = app.id;
       const appName = app.attributes?.name;
 
-      // Get subscription groups through the app's relationship endpoint
-      const params = appStoreClient.buildParams(
-        {},
-        ['subscriptions'],
-        {
-          subscriptionGroups: ['referenceName'],
-          subscriptions: ['name', 'productId', 'state', 'subscriptionPeriod', 'familySharable', 'reviewNote']
-        },
-        null,
-        100
-      );
-
-      const groupsResponse = await appStoreClient.get(`/apps/${appId}/subscriptionGroups`, params);
-
-      // Extract subscriptions from included array and track their group membership
-      // by querying each group's subscriptions endpoint
-      const subscriptionToGroupMap = {};
-      
-      // Get subscriptions for each group to build the mapping
-      for (const group of (groupsResponse.data || [])) {
-        try {
-          const groupSubsResponse = await appStoreClient.get(
-            `/subscriptionGroups/${group.id}/subscriptions`,
-            {
-              'fields[subscriptions]': 'productId',
-              limit: 200
-            }
-          );
-          
-          // Map each subscription to this group
-          (groupSubsResponse.data || []).forEach(sub => {
-            subscriptionToGroupMap[sub.id] = group.id;
-          });
-        } catch (error) {
-          logger.warn(`Failed to get subscriptions for group ${group.id}:`, error.message);
+      // Get subscription groups for the app, paginated. Previously this used
+      // ?include=subscriptions on the groups endpoint and pulled subscription
+      // data out of the truncated `included[]` array (Apple caps include arrays,
+      // typically at 50), which silently dropped subscriptions for apps with
+      // many products. Now we fetch groups first, then paginate each group's
+      // /subscriptionGroups/{id}/subscriptions endpoint for the full data.
+      const subscriptionGroupsRaw = [];
+      {
+        let resp = await appStoreClient.get(`/apps/${appId}/subscriptionGroups`, {
+          'fields[subscriptionGroups]': 'referenceName',
+          limit: 200
+        });
+        while (resp && resp.data) {
+          subscriptionGroupsRaw.push(...resp.data);
+          const nextUrl = resp.links?.next;
+          if (!nextUrl) break;
+          resp = await appStoreClient.getNextPage(nextUrl);
         }
       }
 
-      // Extract all subscriptions from included resources with group relationships
+      // Pull every subscription out of every group, with full fields and full
+      // pagination — this is the authoritative source.
       const allSubscriptions = [];
       const productIds = [];
-      
-      if (groupsResponse.included) {
-        groupsResponse.included.forEach(item => {
-          if (item.type === 'subscriptions') {
-            const productId = item.attributes?.productId;
-            if (productId) {
+      const seenSubscriptionIds = new Set();
+
+      for (const group of subscriptionGroupsRaw) {
+        try {
+          let resp = await appStoreClient.get(
+            `/subscriptionGroups/${group.id}/subscriptions`,
+            {
+              'fields[subscriptions]': 'name,productId,state,subscriptionPeriod,familySharable,reviewNote',
+              limit: 200
+            }
+          );
+          while (resp && resp.data) {
+            for (const item of resp.data) {
+              if (seenSubscriptionIds.has(item.id)) continue;
+              seenSubscriptionIds.add(item.id);
+              const productId = item.attributes?.productId;
+              if (!productId) continue;
               productIds.push(productId);
               allSubscriptions.push({
                 id: item.id,
-                productId: productId,
+                productId,
                 name: item.attributes?.name,
                 state: item.attributes?.state,
                 subscriptionPeriod: item.attributes?.subscriptionPeriod,
                 familySharable: item.attributes?.familySharable,
                 reviewNote: item.attributes?.reviewNote,
-                groupId: subscriptionToGroupMap[item.id] || null
+                groupId: group.id
               });
             }
+            const nextUrl = resp.links?.next;
+            if (!nextUrl) break;
+            resp = await appStoreClient.getNextPage(nextUrl);
           }
-        });
+        } catch (error) {
+          logger.warn(`Failed to get subscriptions for group ${group.id}:`, error.message);
+        }
       }
 
-      // Also include subscription groups information
-      const subscriptionGroups = (groupsResponse.data || []).map(group => ({
+      const subscriptionGroups = subscriptionGroupsRaw.map(group => ({
         id: group.id,
         referenceName: group.attributes?.referenceName
       }));

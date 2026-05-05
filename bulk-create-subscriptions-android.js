@@ -8,8 +8,8 @@
  *
  * Usage:
  *   node bulk-create-subscriptions-android.js <json-file-path> --package <package-name> [--dry-run]
- *   npm run bulk-create-subs-android -- product-ids.json --package com.example.app
- *   npm run bulk-create-subs-android -- product-ids.json --package com.example.app --dry-run
+ *   npm run bulk-create-subscriptions-android -- product-ids.json --package com.example.app
+ *   npm run bulk-create-subscriptions-android -- product-ids.json --package com.example.app --dry-run
  */
 
 require('dotenv').config();
@@ -66,7 +66,7 @@ Bulk Create Android Subscriptions from JSON
 
 Usage:
   node bulk-create-subscriptions-android.js <json-file-path> --package <package-name> [options]
-  npm run bulk-create-subs-android -- <json-file-path> --package <package-name> [options]
+  npm run bulk-create-subscriptions-android -- <json-file-path> --package <package-name> [options]
 
 Arguments:
   json-file-path    Path to the JSON file (output from generate-product-ids.js)

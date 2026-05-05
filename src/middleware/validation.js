@@ -165,6 +165,22 @@ const promotionalOfferBulkCreateSchema = Joi.object({
         'number.min': 'Number of periods must be at least 1',
         'number.max': 'Number of periods cannot exceed 12',
         'number.base': 'Number of periods must be a number'
+      }),
+
+    nameMatch: Joi.string().min(1).max(100).optional()
+      .messages({
+        'string.max': 'Name filter cannot exceed 100 characters'
+      }),
+
+    planPeriodFilter: Joi.array().items(
+      Joi.string().valid(
+        'THREE_DAYS', 'ONE_WEEK', 'TWO_WEEKS', 'ONE_MONTH',
+        'TWO_MONTHS', 'THREE_MONTHS', 'SIX_MONTHS', 'ONE_YEAR'
+      )
+    ).min(1).optional()
+      .messages({
+        'array.min': 'planPeriodFilter must contain at least one value',
+        'any.only': 'planPeriodFilter values must be one of: THREE_DAYS, ONE_WEEK, TWO_WEEKS, ONE_MONTH, TWO_MONTHS, THREE_MONTHS, SIX_MONTHS, ONE_YEAR'
       })
   }).required()
     .messages({
@@ -286,7 +302,23 @@ const introductoryOfferBulkCreateSchema = Joi.object({
     
     startDate: Joi.date().iso().optional(),
     endDate: Joi.date().iso().optional(),
-    subscriptionPricePoint: Joi.string().optional()
+    subscriptionPricePoint: Joi.string().optional(),
+
+    nameMatch: Joi.string().min(1).max(100).optional()
+      .messages({
+        'string.max': 'Name filter cannot exceed 100 characters'
+      }),
+
+    planPeriodFilter: Joi.array().items(
+      Joi.string().valid(
+        'THREE_DAYS', 'ONE_WEEK', 'TWO_WEEKS', 'ONE_MONTH',
+        'TWO_MONTHS', 'THREE_MONTHS', 'SIX_MONTHS', 'ONE_YEAR'
+      )
+    ).min(1).optional()
+      .messages({
+        'array.min': 'planPeriodFilter must contain at least one value',
+        'any.only': 'planPeriodFilter values must be one of: THREE_DAYS, ONE_WEEK, TWO_WEEKS, ONE_MONTH, TWO_MONTHS, THREE_MONTHS, SIX_MONTHS, ONE_YEAR'
+      })
   }).required()
     .messages({
       'object.base': 'Offer template is required'
@@ -298,6 +330,237 @@ const introductoryOfferBundleQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(200).optional(),
   includes: Joi.array().items(Joi.string()).optional()
 });
+
+// Android Offer validation schemas
+const androidOfferPhaseSchema = Joi.object({
+  // Support both iOS-style offerMode and Google Play phaseType
+  offerMode: Joi.string().valid('FREE_TRIAL', 'PAY_UP_FRONT', 'PAY_AS_YOU_GO').optional(),
+  phaseType: Joi.string().valid(
+    'SUBSCRIPTION_OFFER_PHASE_TYPE_FREE',
+    'SUBSCRIPTION_OFFER_PHASE_TYPE_SINGLE_PAYMENT',
+    'SUBSCRIPTION_OFFER_PHASE_TYPE_RECURRING_PAYMENT',
+    'FREE',
+    'SINGLE_PAYMENT',
+    'DISCOUNTED_RECURRING_PAYMENT'
+  ).optional(),
+  
+  // Duration in iOS format or ISO 8601
+  duration: Joi.string().valid(
+    'ONE_WEEK', 'TWO_WEEKS', 'ONE_MONTH', 'TWO_MONTHS', 'THREE_MONTHS', 'SIX_MONTHS', 'ONE_YEAR',
+    'P1W', 'P2W', 'P1M', 'P2M', 'P3M', 'P6M', 'P1Y'
+  ).required()
+    .messages({
+      'any.only': 'Duration must be one of: ONE_WEEK, TWO_WEEKS, ONE_MONTH, TWO_MONTHS, THREE_MONTHS, SIX_MONTHS, ONE_YEAR (or ISO 8601: P1W, P2W, P1M, P2M, P3M, P6M, P1Y)'
+    }),
+  
+  recurrenceCount: Joi.number().integer().min(1).max(52).optional()
+    .messages({
+      'number.min': 'Recurrence count must be at least 1',
+      'number.max': 'Recurrence count cannot exceed 52'
+    }),
+  
+  // Price configuration for paid phases
+  price: Joi.object({
+    units: Joi.string().pattern(/^\d+$/).optional(),
+    nanos: Joi.number().integer().min(0).max(999999999).optional(),
+    currencyCode: Joi.string().length(3).optional()
+  }).optional(),
+  
+  pricePercentageDiscount: Joi.number().min(1).max(99).optional()
+    .messages({
+      'number.min': 'Price percentage discount must be at least 1%',
+      'number.max': 'Price percentage discount cannot exceed 99%'
+    })
+}).or('offerMode', 'phaseType')
+  .messages({
+    'object.missing': 'Either offerMode or phaseType is required for each phase'
+  });
+
+const androidOfferCreateSchema = Joi.object({
+  packageName: Joi.string().pattern(/^[a-zA-Z][a-zA-Z0-9._]*$/).required()
+    .messages({
+      'string.pattern.base': 'Package name must be a valid Android package name',
+      'string.empty': 'Package name is required'
+    }),
+  
+  productId: Joi.string().pattern(/^[a-zA-Z0-9._-]+$/).required()
+    .messages({
+      'string.pattern.base': 'Product ID can only contain letters, numbers, dots, underscores, and hyphens',
+      'string.empty': 'Product ID is required'
+    }),
+  
+  basePlanId: Joi.string().pattern(/^[a-zA-Z0-9_-]+$/).required()
+    .messages({
+      'string.pattern.base': 'Base plan ID can only contain letters, numbers, underscores, and hyphens',
+      'string.empty': 'Base plan ID is required'
+    }),
+  
+  offerId: Joi.string().pattern(/^[a-zA-Z0-9_-]+$/).min(1).max(63).required()
+    .messages({
+      'string.pattern.base': 'Offer ID can only contain letters, numbers, underscores, and hyphens',
+      'string.empty': 'Offer ID is required',
+      'string.max': 'Offer ID cannot exceed 63 characters'
+    }),
+  
+  phases: Joi.array().items(androidOfferPhaseSchema).min(1).max(2).required()
+    .messages({
+      'array.min': 'At least one phase is required',
+      'array.max': 'Maximum of 2 phases allowed',
+      'array.base': 'Phases must be an array'
+    }),
+  
+  offerTags: Joi.array().items(Joi.string().max(40)).max(20).optional()
+    .messages({
+      'array.max': 'Maximum of 20 offer tags allowed'
+    }),
+  
+  targetNewCustomers: Joi.boolean().optional(),
+  
+  targeting: Joi.object({
+    acquisitionRule: Joi.object({
+      scope: Joi.object({
+        thisSubscription: Joi.object().optional(),
+        anySubscriptionInApp: Joi.object().optional(),
+        specificSubscriptionInApp: Joi.string().optional()
+      }).optional()
+    }).optional()
+  }).optional(),
+  
+  regionalConfigs: Joi.array().items(
+    Joi.object({
+      regionCode: Joi.string().length(2).required(),
+      newSubscriberAvailability: Joi.boolean().optional(),
+      price: Joi.object({
+        currencyCode: Joi.string().length(3).required(),
+        units: Joi.string().pattern(/^\d+$/).required(),
+        nanos: Joi.number().integer().min(0).max(999999999).optional()
+      }).optional()
+    })
+  ).optional()
+});
+
+const androidOfferUpdateSchema = Joi.object({
+  phases: Joi.array().items(androidOfferPhaseSchema).min(1).max(2).optional(),
+  
+  offerTags: Joi.array().items(Joi.string().max(40)).max(20).optional(),
+  
+  targeting: Joi.object({
+    acquisitionRule: Joi.object({
+      scope: Joi.object({
+        thisSubscription: Joi.object().optional(),
+        anySubscriptionInApp: Joi.object().optional(),
+        specificSubscriptionInApp: Joi.string().optional()
+      }).optional()
+    }).optional()
+  }).optional(),
+  
+  regionalConfigs: Joi.array().items(
+    Joi.object({
+      regionCode: Joi.string().length(2).required(),
+      newSubscriberAvailability: Joi.boolean().optional(),
+      price: Joi.object({
+        currencyCode: Joi.string().length(3).required(),
+        units: Joi.string().pattern(/^\d+$/).required(),
+        nanos: Joi.number().integer().min(0).max(999999999).optional()
+      }).optional()
+    })
+  ).optional()
+}).min(1)
+  .messages({
+    'object.min': 'At least one field must be provided for update'
+  });
+
+const androidOfferBulkCreateSchema = Joi.object({
+  packageName: Joi.string().pattern(/^[a-zA-Z][a-zA-Z0-9._]*$/).required()
+    .messages({
+      'string.pattern.base': 'Package name must be a valid Android package name',
+      'string.empty': 'Package name is required'
+    }),
+  
+  offerTemplate: Joi.object({
+    offerId: Joi.string().pattern(/^[a-zA-Z0-9_-]+$/).min(1).max(63).required()
+      .messages({
+        'string.pattern.base': 'Offer ID can only contain letters, numbers, underscores, and hyphens',
+        'string.empty': 'Offer ID is required'
+      }),
+    
+    phases: Joi.array().items(androidOfferPhaseSchema).min(1).max(2).required()
+      .messages({
+        'array.min': 'At least one phase is required',
+        'array.max': 'Maximum of 2 phases allowed'
+      }),
+    
+    offerTags: Joi.array().items(Joi.string().max(40)).max(20).optional(),
+    
+    targetNewCustomers: Joi.boolean().optional(),
+    
+    targeting: Joi.object({
+      acquisitionRule: Joi.object({
+        scope: Joi.object({
+          thisSubscription: Joi.object().optional(),
+          anySubscriptionInApp: Joi.object().optional(),
+          specificSubscriptionInApp: Joi.string().optional()
+        }).optional()
+      }).optional()
+    }).optional(),
+    
+    // Optional filters for which subscriptions/base plans to target
+    productIds: Joi.array().items(Joi.string()).optional(),
+    basePlanIds: Joi.array().items(Joi.string()).optional(),
+    basePlanPeriods: Joi.array().items(
+      Joi.string().pattern(/^P(\d+W|\d+M|\d+Y|\d+D)$/)
+    ).min(1).optional()
+      .messages({
+        'string.pattern.base': 'basePlanPeriods entries must be ISO 8601 durations (e.g. P1W, P1M, P1Y)',
+        'array.min': 'basePlanPeriods must contain at least one value'
+      })
+  }).required()
+    .messages({
+      'object.base': 'Offer template is required'
+    })
+});
+
+const androidOfferPackageQuerySchema = Joi.object({
+  productId: Joi.string().optional(),
+  basePlanId: Joi.string().optional(),
+  limit: Joi.number().integer().min(1).max(200).optional()
+});
+
+// Subscription Localization validation schemas
+const subscriptionLocalizationCreateSchema = Joi.object({
+  locale: Joi.string().pattern(/^[a-z]{2}(-[A-Z]{2})?$/).required()
+    .messages({
+      'string.pattern.base': 'Locale must be in format "en" or "en-US"',
+      'string.empty': 'Locale is required'
+    }),
+  
+  name: Joi.string().min(1).max(30).required()
+    .messages({
+      'string.empty': 'Name is required',
+      'string.max': 'Name cannot exceed 30 characters'
+    }),
+  
+  description: Joi.string().max(45).optional().allow('')
+    .messages({
+      'string.max': 'Description cannot exceed 45 characters'
+    })
+});
+
+const subscriptionLocalizationUpdateSchema = Joi.object({
+  name: Joi.string().min(1).max(30).optional()
+    .messages({
+      'string.empty': 'Name cannot be empty',
+      'string.max': 'Name cannot exceed 30 characters'
+    }),
+  
+  description: Joi.string().max(45).optional().allow('')
+    .messages({
+      'string.max': 'Description cannot exceed 45 characters'
+    })
+}).min(1)
+  .messages({
+    'object.min': 'At least one field must be provided for update (name or description)'
+  });
 
 // Middleware function to validate request data
 const validate = (schema, property = 'body') => {
@@ -365,6 +628,23 @@ const validateIntroductoryOfferId = (req, res, next) => {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(id)) {
     return next(new ValidationError('Introductory offer ID must be a valid UUID'));
+  }
+
+  next();
+};
+
+// Middleware to validate subscription localization ID parameter
+const validateLocalizationId = (req, res, next) => {
+  const { localizationId } = req.params;
+  
+  if (!localizationId || typeof localizationId !== 'string' || localizationId.trim() === '') {
+    return next(new ValidationError('Valid localization ID is required'));
+  }
+
+  // Basic UUID format validation (Apple uses UUIDs for resource IDs)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(localizationId)) {
+    return next(new ValidationError('Localization ID must be a valid UUID'));
   }
 
   next();
@@ -438,12 +718,19 @@ module.exports = {
   introductoryOfferUpdateSchema,
   introductoryOfferBulkCreateSchema,
   introductoryOfferBundleQuerySchema,
+  androidOfferCreateSchema,
+  androidOfferUpdateSchema,
+  androidOfferBulkCreateSchema,
+  androidOfferPackageQuerySchema,
+  subscriptionLocalizationCreateSchema,
+  subscriptionLocalizationUpdateSchema,
 
   // Validation middleware
   validate,
   validateSubscriptionId,
   validatePromotionalOfferId,
   validateIntroductoryOfferId,
+  validateLocalizationId,
   validatePagination,
   validateIncludes
 };

@@ -19,6 +19,7 @@ const {
 const subscriptionRoutes = require('./src/routes/subscriptions');
 const promotionalOffersRoutes = require('./src/routes/promotional-offers');
 const introductoryOffersRoutes = require('./src/routes/introductory-offers');
+const androidOffersRoutes = require('./src/routes/android-offers');
 const appRoutes = require('./src/routes/apps');
 const buildsRoutes = require('./src/routes/builds');
 const certificatesRoutes = require('./src/routes/certificates');
@@ -136,6 +137,25 @@ app.use('/api/introductory-offers',
   introductoryOffersRoutes
 );
 
+// Android subscription offers routes (Google Play)
+app.use('/api/android-offers',
+  // Apply write limiter to POST, PUT, DELETE operations
+  (req, res, next) => {
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+      if (req.method === 'POST' && req.path === '/bulk') {
+        // More lenient limit for bulk operations (they take longer)
+        return writeLimiter(req, res, next);
+      }
+      if (req.method === 'POST' && req.path === '/') {
+        return createLimiter(req, res, next);
+      }
+      return writeLimiter(req, res, next);
+    }
+    next();
+  },
+  androidOffersRoutes
+);
+
 // App management routes
 app.use('/api/apps', appRoutes);
 
@@ -163,6 +183,7 @@ app.get('/', (req, res) => {
       subscriptions: '/api/subscriptions',
       promotionalOffers: '/api/promotional-offers',
       introductoryOffers: '/api/introductory-offers',
+      androidOffers: '/api/android-offers',
       builds: '/api/builds',
       certificates: '/api/certificates',
       devices: '/api/devices',

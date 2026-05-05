@@ -1,11 +1,10 @@
 require('dotenv').config();
 const promotionalOfferService = require('./src/services/promotional-offers');
 const logger = require('./src/utils/logger');
-const readline = require('readline');
 
 /**
  * Script to bulk create promotional offers for all subscriptions in a bundle ID with a given reference name
- * Usage: npm run bulk-create-promo -- <bundle-id> <reference-name> [options]
+ * Usage: npm run bulk-create-promotional-offers -- <bundle-id> <reference-name> [options]
  * 
  * ⚠️ CRITICAL: ONLY use bundle ID 'com.vtech.plus.inapp.ios.test3' for testing
  */
@@ -47,12 +46,26 @@ async function bulkCreatePromotionalOffers() {
     const duration = getArgValue(args, '--duration') || 'ONE_MONTH';
     const offerMode = getArgValue(args, '--mode') || 'PAY_AS_YOU_GO';
     const numberOfPeriods = parseInt(getArgValue(args, '--periods') || '3');
-    const skipConfirmation = args.includes('--yes') || args.includes('-y');
-
+    const nameMatch = getArgValue(args, '--match');
+    const planPeriodArg = getArgValue(args, '--plan-period');
+    const planPeriodFilter = planPeriodArg
+      ? planPeriodArg.split(',').map(p => p.trim().toUpperCase()).filter(Boolean)
+      : null;
+    const validPeriods = ['THREE_DAYS', 'ONE_WEEK', 'TWO_WEEKS', 'ONE_MONTH', 'TWO_MONTHS', 'THREE_MONTHS', 'SIX_MONTHS', 'ONE_YEAR'];
+    if (planPeriodFilter) {
+      const invalid = planPeriodFilter.filter(p => !validPeriods.includes(p));
+      if (invalid.length > 0) {
+        console.error(`❌ Error: Invalid --plan-period value(s): ${invalid.join(', ')}`);
+        console.error(`   Valid values: ${validPeriods.join(', ')}\n`);
+        process.exit(1);
+      }
+    }
     console.log('\n🎁 Bulk Create Promotional Offers\n');
     console.log('─'.repeat(80));
     console.log(`Bundle ID: ${bundleId}`);
     console.log(`Reference Name: ${referenceName === '*' ? '* (ALL GROUPS)' : `${referenceName} (exact match)`}`);
+    if (nameMatch) console.log(`Name Filter: "${nameMatch}" (subscriptions must include this, case-insensitive)`);
+    if (planPeriodFilter) console.log(`Plan Period Filter: [${planPeriodFilter.join(', ')}]`);
     console.log('─'.repeat(80));
     console.log('\n📋 Offer Template:');
     console.log(`   Name: ${name}`);
@@ -61,23 +74,6 @@ async function bulkCreatePromotionalOffers() {
     console.log(`   Offer Mode: ${offerMode}`);
     console.log(`   Number of Periods: ${numberOfPeriods}`);
     console.log('─'.repeat(80));
-
-    // Ask for confirmation unless --yes flag is provided
-    if (!skipConfirmation) {
-      const confirmMessage = referenceName === '*' 
-        ? '\n⚠️  This will create promotional offers for ALL subscriptions in ALL subscription groups.\n' +
-          '⚠️  WARNING: This may create a LARGE number of offers!\n' +
-          'Do you want to continue? (yes/no): '
-        : '\n⚠️  This will create promotional offers for ALL subscriptions in the matching group(s).\n' +
-          'Do you want to continue? (yes/no): ';
-      
-      const confirmed = await askForConfirmation(confirmMessage);
-
-      if (!confirmed) {
-        console.log('\n❌ Operation cancelled by user');
-        process.exit(0);
-      }
-    }
 
     console.log('\n🚀 Starting bulk creation...\n');
 
@@ -89,6 +85,8 @@ async function bulkCreatePromotionalOffers() {
       offerMode,
       numberOfPeriods
     };
+    if (nameMatch) offerTemplate.nameMatch = nameMatch;
+    if (planPeriodFilter) offerTemplate.planPeriodFilter = planPeriodFilter;
 
     const result = await promotionalOfferService.bulkCreatePromotionalOffers(
       bundleId,
@@ -170,7 +168,7 @@ async function bulkCreatePromotionalOffers() {
       };
       fs.writeFileSync(rollbackPath, JSON.stringify(rollbackData, null, 2));
       console.log(`📝 Rollback log saved to: ${rollbackPath}`);
-      console.log(`   Use this file with npm run rollback-promo-offers to delete these offers`);
+      console.log(`   Use this file with npm run rollback-promotional-offers to delete these offers`);
     }
 
     // Exit with appropriate code
@@ -190,7 +188,7 @@ async function bulkCreatePromotionalOffers() {
       console.error(`   No subscription groups found with reference name "${args[1]}" for bundle ID "${args[0]}"`);
       console.error('\n   Tips:');
       console.error('   - Verify the reference name is correct (case-sensitive, exact match)');
-      console.error('   - Run: npm run get-product-ids com.vtech.plus.inapp.ios.test3 to see available groups');
+      console.error('   - Run: npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3 to see available groups');
     }
 
     logger.error('Failed to bulk create promotional offers', {
@@ -209,20 +207,6 @@ function getArgValue(args, flag) {
   return null;
 }
 
-function askForConfirmation(question) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase() === 'yes' || answer.toLowerCase() === 'y');
-    });
-  });
-}
-
 function showHelp() {
   console.log(`
 🎁 Bulk Create Promotional Offers
@@ -233,7 +217,7 @@ the given reference name (exact match only), or all groups if "*" is specified.
 ⚠️  CRITICAL: ONLY use bundle ID 'com.vtech.plus.inapp.ios.test3' for testing
 
 Usage:
-  npm run bulk-create-promo -- <bundle-id> <reference-name> [options]
+  npm run bulk-create-promotional-offers -- <bundle-id> <reference-name> [options]
 
 Arguments:
   bundle-id           App bundle identifier (must be com.vtech.plus.inapp.ios.test3 for testing)
@@ -249,24 +233,33 @@ Options:
   --mode <mode>       Offer mode: PAY_AS_YOU_GO, PAY_UP_FRONT, FREE_TRIAL
                       (default: PAY_AS_YOU_GO)
   --periods <num>     Number of periods (1-12, default: 3)
-  --yes, -y           Skip confirmation prompt
+  --match <substring> Only include subscriptions whose name contains this substring
+                      (case-insensitive). Useful for mixed-cadence groups.
+  --plan-period <list> Only include subscriptions whose subscriptionPeriod is in this
+                      comma-separated list. More reliable than --match when subscriptions
+                      aren't named by cadence. Valid values: THREE_DAYS, ONE_WEEK, TWO_WEEKS,
+                      ONE_MONTH, TWO_MONTHS, THREE_MONTHS, SIX_MONTHS, ONE_YEAR.
+                      Example: --plan-period ONE_MONTH,TWO_MONTHS
   --help, -h          Show this help message
 
 Examples:
   # Create offers for all subscriptions in "Group 1"
-  npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "Group 1"
+  npm run bulk-create-promotional-offers -- com.vtech.plus.inapp.ios.test3 "Group 1"
 
   # Create offers for ALL groups (use "*")
-  npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "*" --name "Holiday Sale"
+  npm run bulk-create-promotional-offers -- com.vtech.plus.inapp.ios.test3 "*" --name "Holiday Sale"
 
   # Create offers with custom name and settings
-  npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "Group 1" --name "Spring Sale" --duration TWO_MONTHS --periods 2
+  npm run bulk-create-promotional-offers -- com.vtech.plus.inapp.ios.test3 "Group 1" --name "Spring Sale" --duration TWO_MONTHS --periods 2
 
   # Create free trial offers
-  npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "DN GroupA" --name "Free Trial" --mode FREE_TRIAL --periods 1 --duration ONE_WEEK
+  npm run bulk-create-promotional-offers -- com.vtech.plus.inapp.ios.test3 "DN GroupA" --name "Free Trial" --mode FREE_TRIAL --periods 1 --duration ONE_WEEK
 
-  # Skip confirmation prompt
-  npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "Group 2" --yes
+  # Only create offers for monthly plans in the group
+  npm run bulk-create-promotional-offers -- com.vtech.plus.inapp.ios.test3 "Group 1" --plan-period ONE_MONTH --name "Monthly Promo"
+
+  # Apply to annual + 6-month plans only
+  npm run bulk-create-promotional-offers -- com.vtech.plus.inapp.ios.test3 "Group 1" --plan-period ONE_YEAR,SIX_MONTHS --name "Long Plan Promo"
 
 How It Works:
   1. Finds subscription groups matching the reference name (or all if "*")
@@ -288,9 +281,9 @@ Output Files:
   - rollback-<reference>-<timestamp>.json           # For cleanup
 
 Related Commands:
-  npm run get-product-ids com.vtech.plus.inapp.ios.test3  # List subscription groups
-  npm run get-promo-offers com.vtech.plus.inapp.ios.test3 # List existing offers
-  npm run rollback-promo-offers <rollback-file>           # Delete created offers
+  npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3  # List subscription groups
+  npm run get-promotional-offers com.vtech.plus.inapp.ios.test3 # List existing offers
+  npm run rollback-promotional-offers <rollback-file>           # Delete created offers
   `);
 }
 

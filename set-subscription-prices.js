@@ -9,8 +9,8 @@
  * 
  * Usage:
  *   node set-subscription-prices.js <json-file-path> [--dry-run]
- *   npm run set-prices -- product-ids-test3.json
- *   npm run set-prices -- product-ids-test3.json --dry-run
+ *   npm run set-subscription-prices -- product-ids-test3.json
+ *   npm run set-subscription-prices -- product-ids-test3.json --dry-run
  */
 
 const fs = require('fs');
@@ -18,7 +18,7 @@ const appService = require('./src/services/apps');
 const subscriptionService = require('./src/services/subscriptions');
 const logger = require('./src/utils/logger');
 
-const BUNDLE_ID = 'com.vtech.plus.inapp.ios.test3';
+const BUNDLE_ID = 'com.vtech.plus.uat';
 
 /**
  * Display help message
@@ -29,30 +29,35 @@ Set Subscription Prices from JSON
 
 Usage:
   node set-subscription-prices.js <json-file-path> [options]
-  npm run set-prices -- <json-file-path> [options]
+  npm run set-subscription-prices -- <json-file-path> [options]
 
 Arguments:
   json-file-path    Path to the JSON file (output from generate-product-ids.js)
 
 Options:
-  --dry-run         Preview what would be set without making changes
-  --help, -h        Show this help message
+  --dry-run              Preview what would be set without making changes
+  --refresh-territories  Force refresh territories list from API (otherwise cached)
+  --help, -h             Show this help message
 
 Examples:
   node set-subscription-prices.js product-ids-test3.json
   node set-subscription-prices.js product-ids-test3.json --dry-run
-  npm run set-prices -- product-ids-test3.json
+  node set-subscription-prices.js product-ids-test3.json --refresh-territories
+  npm run set-subscription-prices -- product-ids-test3.json
 
 Process:
   1. Reads the JSON file with subscription data (including USD prices)
   2. Fetches subscription IDs from App Store Connect
-  3. For each subscription, finds the price point matching the USD price
-  4. Sets the price for all territories using the same price tier
-  5. Reports success/failure for each operation
+  3. Fetches available territories (once, then cached for all subscriptions)
+  4. For each subscription, finds the price point matching the USD price
+  5. Sets the price for all territories using the same price tier
+  6. Reports success/failure for each operation
 
 Note:
   - Prices are set using Apple's price tier system
   - The USD price determines the tier, which maps to equivalent prices in all territories
+  - Territories are fetched once and cached for all subscriptions
+  - Use --refresh-territories to force a fresh fetch of territories
   - Price changes take effect immediately
 `);
 }
@@ -71,6 +76,7 @@ async function main() {
   
   // Check for dry-run flag
   const dryRun = args.includes('--dry-run');
+  const refreshTerritories = args.includes('--refresh-territories');
   const jsonPath = args.find(arg => !arg.startsWith('--'));
   
   if (!jsonPath) {
@@ -90,6 +96,10 @@ async function main() {
   
   if (dryRun) {
     console.log('\n[DRY-RUN MODE] No changes will be made\n');
+  }
+  
+  if (refreshTerritories) {
+    console.log('[REFRESH] Will force refresh territories from API\n');
   }
   
   try {
@@ -124,6 +134,9 @@ async function main() {
       notFound: 0,
       errors: []
     };
+    
+    // Track if territories have been fetched (for first subscription only)
+    let territoriesFetched = false;
     
     // Process each subscription group
     console.log('\n' + '-'.repeat(70));
@@ -168,11 +181,15 @@ async function main() {
           // Set prices for all territories
           console.log(`    Setting prices for all territories...`);
           
+          // Force refresh territories on first subscription if --refresh-territories flag is set
+          const forceRefresh = refreshTerritories && !territoriesFetched;
+          
           const priceResults = await subscriptionService.setSubscriptionPricesAllTerritories(
             existingSub.id,
             price,
             {
               dryRun: false,
+              forceRefreshTerritories: forceRefresh,
               onProgress: (territory, success, error) => {
                 if (success) {
                   process.stdout.write('.');
@@ -182,6 +199,9 @@ async function main() {
               }
             }
           );
+          
+          // Mark territories as fetched after first successful call
+          territoriesFetched = true;
           
           console.log(''); // New line after progress dots
           console.log(`    [SUCCESS] Set prices: ${priceResults.success}/${priceResults.total} territories`);

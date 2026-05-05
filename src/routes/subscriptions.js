@@ -5,10 +5,13 @@ const {
   validateSubscriptionId,
   validatePagination,
   validateIncludes,
+  validateLocalizationId,
   subscriptionCreateSchema,
   subscriptionUpdateSchema,
   subscriptionQuerySchema,
-  pricingUpdateSchema
+  pricingUpdateSchema,
+  subscriptionLocalizationCreateSchema,
+  subscriptionLocalizationUpdateSchema
 } = require('../middleware/validation');
 
 const router = express.Router();
@@ -140,6 +143,58 @@ router.get('/:id/promotional-offers',
 router.get('/:id/price-points',
   validateSubscriptionId,
   require('../controllers/promotional-offers').getSubscriptionPricePoints
+);
+
+/**
+ * @route   GET /api/subscriptions/:id/localizations
+ * @desc    Get all localizations for a subscription
+ * @access  Public
+ */
+router.get('/:id/localizations',
+  validateSubscriptionId,
+  subscriptionController.getSubscriptionLocalizations
+);
+
+/**
+ * @route   POST /api/subscriptions/:id/localizations
+ * @desc    Create a new localization for a subscription
+ * @access  Public
+ */
+router.post('/:id/localizations',
+  validateSubscriptionId,
+  validate(subscriptionLocalizationCreateSchema),
+  subscriptionController.createSubscriptionLocalization
+);
+
+/**
+ * @route   GET /api/subscriptions/localizations/:localizationId
+ * @desc    Get a specific subscription localization by ID
+ * @access  Public
+ */
+router.get('/localizations/:localizationId',
+  validateLocalizationId,
+  subscriptionController.getSubscriptionLocalizationById
+);
+
+/**
+ * @route   PATCH /api/subscriptions/localizations/:localizationId
+ * @desc    Update a subscription localization
+ * @access  Public
+ */
+router.patch('/localizations/:localizationId',
+  validateLocalizationId,
+  validate(subscriptionLocalizationUpdateSchema),
+  subscriptionController.updateSubscriptionLocalization
+);
+
+/**
+ * @route   DELETE /api/subscriptions/localizations/:localizationId
+ * @desc    Delete a subscription localization
+ * @access  Public
+ */
+router.delete('/localizations/:localizationId',
+  validateLocalizationId,
+  subscriptionController.deleteSubscriptionLocalization
 );
 
 module.exports = router;

@@ -8,8 +8,8 @@
  * 
  * Usage:
  *   node bulk-create-subscriptions.js <json-file-path> [--dry-run]
- *   npm run bulk-create-subs -- product-ids-test3.json
- *   npm run bulk-create-subs -- product-ids-test3.json --dry-run
+ *   npm run bulk-create-subscriptions -- product-ids-test3.json
+ *   npm run bulk-create-subscriptions -- product-ids-test3.json --dry-run
  */
 
 const fs = require('fs');
@@ -52,7 +52,7 @@ Bulk Create Subscriptions from JSON
 
 Usage:
   node bulk-create-subscriptions.js <json-file-path> [options]
-  npm run bulk-create-subs -- <json-file-path> [options]
+  npm run bulk-create-subscriptions -- <json-file-path> [options]
 
 Arguments:
   json-file-path    Path to the JSON file (output from generate-product-ids.js)
@@ -64,7 +64,7 @@ Options:
 Examples:
   node bulk-create-subscriptions.js product-ids-test3.json
   node bulk-create-subscriptions.js product-ids-test3.json --dry-run
-  npm run bulk-create-subs -- product-ids-test3.json
+  npm run bulk-create-subscriptions -- product-ids-test3.json
 
 Process:
   1. Reads the JSON file with subscription data

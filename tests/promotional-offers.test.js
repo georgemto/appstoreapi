@@ -21,10 +21,12 @@ jest.mock('../src/config/appstore', () => ({
     keyId: 'test-key-id',
     privateKeyPath: './test-key.p8',
     issuerId: 'test-issuer-id',
+    apiBaseUrl: 'https://api.appstoreconnect.apple.com/v1',
     endpoints: {
       subscriptions: '/subscriptions',
       subscriptionGroups: '/subscriptionGroups',
-      promotionalOffers: '/subscriptionPromotionalOffers'
+      promotionalOffers: '/subscriptionPromotionalOffers',
+      introductoryOffers: '/subscriptionIntroductoryOffers'
     },
     rateLimiting: {
       windowMs: 900000,

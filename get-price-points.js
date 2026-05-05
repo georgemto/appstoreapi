@@ -209,9 +209,9 @@ Notes:
   - Results are saved to a JSON file for reference
 
 Related Commands:
-  npm run create-promo-offer <subscription-id> --list-price-points
-  npm run create-promo-offer <subscription-id> --price-point <id>
-  npm run get-product-ids <bundle-id>     # Get subscription IDs
+  npm run create-promotional-offer <subscription-id> --list-price-points
+  npm run create-promotional-offer <subscription-id> --price-point <id>
+  npm run get-subscription-product-ids <bundle-id>     # Get subscription IDs
   `);
 }
 

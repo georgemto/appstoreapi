@@ -54,6 +54,13 @@ class AppleAPIError extends AppStoreConnectError {
   }
 }
 
+class GooglePlayAPIError extends AppStoreConnectError {
+  constructor(message, googleErrorCode, statusCode = 500) {
+    super(message, statusCode);
+    this.googleErrorCode = googleErrorCode;
+  }
+}
+
 const handleAsyncError = (fn) => {
   return (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
@@ -112,6 +119,7 @@ module.exports = {
   ConflictError,
   RateLimitError,
   AppleAPIError,
+  GooglePlayAPIError,
   handleAsyncError,
   errorHandler
 };

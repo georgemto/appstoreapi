@@ -1,302 +1,391 @@
-require('dotenv').config();
-const promotionalOfferService = require('./src/services/promotional-offers');
-const logger = require('./src/utils/logger');
-const readline = require('readline');
-const fs = require('fs');
+#!/usr/bin/env node
 
 /**
- * Script to delete promotional offers (single or bulk rollback)
- * Usage: 
- *   npm run delete-promo-offer <offer-id>
- *   npm run rollback-promo-offers <rollback-file>
+ * Delete promotional offers and deactivate subscription offer codes.
+ *
+ * Two distinct Apple resources are handled here:
+ *   - subscriptionPromotionalOffers → DELETE /v1/subscriptionPromotionalOffers/{id}
+ *   - subscriptionOfferCodes        → PATCH  /v1/subscriptionOfferCodes/{id}  {active: false}
+ *
+ * Apple does NOT support DELETE on offer codes — the supported "remove" path
+ * is to deactivate them so they can no longer be redeemed.
+ *
+ * Usage:
+ *   node delete-promotional-offers.js --offer-id <id> [--offer-id <id> ...] [--confirm]
+ *   node delete-promotional-offers.js --offer-code-id <id> [...] [--confirm]
+ *   node delete-promotional-offers.js --from-json <file> [--confirm]
+ *   node delete-promotional-offers.js --from-csv  <file> [--confirm]
+ *
+ * --from-csv understands CSVs from:
+ *   - get-promotional-offers.js: "Offer ID" / "Offer IDs" columns → delete
+ *   - get-offer-codes.js:        "Offer Code ID" / "Offer Code IDs" columns → deactivate
+ *   - Combined CSVs with a "Type" column (PROMO/OFFER_CODE) and
+ *     "Resource ID" / "Resource IDs" columns
+ *
+ * --from-json understands:
+ *   - get-promotional-offers output: subscriptions[].offers[]
+ *   - get-offer-codes output:        subscriptions[].offerCodes[]
+ *   - bulk-create rollback logs:     createdOffers[].offerId
+ *   - generic top-level:             offerIds[] / offers[] / offerCodeIds[]
  */
-async function deletePromotionalOffers() {
-  try {
-    // Parse command line arguments
-    const args = process.argv.slice(2);
-    
-    if (args.includes('--help') || args.includes('-h') || args.length === 0) {
-      showHelp();
-      process.exit(0);
-    }
 
-    const firstArg = args[0];
-    const skipConfirmation = args.includes('--yes') || args.includes('-y');
-    const dryRun = args.includes('--dry-run');
+require('dotenv').config();
+const fs = require('fs');
+const promotionalOfferService = require('./src/services/promotional-offers');
+const logger = require('./src/utils/logger');
 
-    // Check if it's a rollback file or single offer ID
-    const isRollbackFile = firstArg.endsWith('.json') && fs.existsSync(firstArg);
+function parseArgs(argv) {
+  const args = {
+    promoIds: [],
+    offerCodeIds: [],
+    fromJson: null,
+    fromCsv: null,
+    dryRun: false,
+    confirm: false,
+    help: false
+  };
 
-    if (isRollbackFile) {
-      await performRollback(firstArg, skipConfirmation, dryRun);
+  const rest = argv.slice(2);
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    const takeValue = (flag) => {
+      if (a === flag) return rest[++i];
+      if (a.startsWith(flag + '=')) return a.slice(flag.length + 1);
+      return undefined;
+    };
+
+    if (a === '--help' || a === '-h') {
+      args.help = true;
+    } else if (a === '--dry-run') {
+      args.dryRun = true;
+    } else if (a === '--confirm') {
+      args.confirm = true;
     } else {
-      await deleteSingleOffer(firstArg, skipConfirmation, dryRun);
-    }
-
-  } catch (error) {
-    console.error('\n❌ Error:', error.message);
-
-    if (error.statusCode === 401) {
-      console.error('\n🔐 Authentication Error:');
-      console.error('   Please check your App Store Connect API credentials in .env file');
-    } else if (error.statusCode === 403) {
-      console.error('\n🚫 Authorization Error:');
-      console.error('   Your API key does not have permission to delete promotional offers');
-    } else if (error.statusCode === 404 || error.message.includes('not found')) {
-      console.error('\n🔍 Not Found:');
-      console.error(`   Promotional offer not found`);
-    }
-
-    logger.error('Failed to delete promotional offer(s)', {
-      error: error.message,
-      stack: error.stack
-    });
-    process.exit(1);
-  }
-}
-
-async function deleteSingleOffer(offerId, skipConfirmation, dryRun) {
-  console.log('\n🗑️  Delete Promotional Offer\n');
-  console.log('─'.repeat(80));
-  console.log(`Offer ID: ${offerId}`);
-  if (dryRun) {
-    console.log('⚠️  DRY RUN MODE - No changes will be made');
-  }
-  console.log('─'.repeat(80));
-
-  // Get offer details first
-  try {
-    const offerDetails = await promotionalOfferService.getPromotionalOffer(offerId, []);
-    console.log('\n📋 Offer Details:');
-    console.log(`   Name: ${offerDetails.data.attributes.name}`);
-    console.log(`   Offer Code: ${offerDetails.data.attributes.offerCode}`);
-    console.log(`   Duration: ${offerDetails.data.attributes.duration}`);
-    console.log(`   Offer Mode: ${offerDetails.data.attributes.offerMode}`);
-    console.log('─'.repeat(80));
-  } catch (error) {
-    console.warn('\n⚠️  Could not retrieve offer details (will still attempt deletion)');
-  }
-
-  // Ask for confirmation
-  if (!skipConfirmation) {
-    const confirmed = await askForConfirmation(
-      '\n⚠️  This action cannot be undone. Delete this promotional offer? (yes/no): '
-    );
-
-    if (!confirmed) {
-      console.log('\n❌ Operation cancelled by user');
-      process.exit(0);
+      const promoId = takeValue('--offer-id');
+      const codeId = takeValue('--offer-code-id');
+      const fj = takeValue('--from-json');
+      const fc = takeValue('--from-csv');
+      if (promoId !== undefined) args.promoIds.push(promoId);
+      else if (codeId !== undefined) args.offerCodeIds.push(codeId);
+      else if (fj !== undefined) args.fromJson = fj;
+      else if (fc !== undefined) args.fromCsv = fc;
+      else if (!a.startsWith('-')) {
+        // Back-compat positional: .json/.csv → from-json/from-csv,
+        // anything else assumed to be a promotional offer ID.
+        if (a.endsWith('.json')) args.fromJson = a;
+        else if (a.endsWith('.csv')) args.fromCsv = a;
+        else args.promoIds.push(a);
+      }
     }
   }
 
-  if (dryRun) {
-    console.log('\n✅ DRY RUN: Would delete promotional offer:', offerId);
-    process.exit(0);
-  }
-
-  // Delete the offer
-  console.log('\n🗑️  Deleting promotional offer...');
-  await promotionalOfferService.deletePromotionalOffer(offerId);
-  
-  console.log('\n✅ Successfully deleted promotional offer');
-  console.log(`   Offer ID: ${offerId}`);
-}
-
-async function performRollback(rollbackFile, skipConfirmation, dryRun) {
-  console.log('\n🔄 Rollback Promotional Offers\n');
-  console.log('─'.repeat(80));
-  console.log(`Rollback File: ${rollbackFile}`);
-  if (dryRun) {
-    console.log('⚠️  DRY RUN MODE - No changes will be made');
-  }
-  console.log('─'.repeat(80));
-
-  // Read rollback file
-  const rollbackData = JSON.parse(fs.readFileSync(rollbackFile, 'utf8'));
-
-  if (!rollbackData.operation || rollbackData.operation !== 'bulk_create_promotional_offers') {
-    throw new Error('Invalid rollback file format. This file does not appear to be a promotional offers rollback log.');
-  }
-
-  const offersToDelete = rollbackData.createdOffers || [];
-
-  if (offersToDelete.length === 0) {
-    console.log('\n⚠️  No offers to delete in rollback file');
-    process.exit(0);
-  }
-
-  console.log('\n📋 Rollback Information:');
-  console.log(`   Bundle ID: ${rollbackData.bundleId}`);
-  console.log(`   Reference Name: ${rollbackData.referenceName}`);
-  console.log(`   Created At: ${rollbackData.createdAt}`);
-  console.log(`   Offers to Delete: ${offersToDelete.length}`);
-  console.log('─'.repeat(80));
-
-  // Display offers that will be deleted
-  console.log('\n🗑️  Offers to be deleted:\n');
-  offersToDelete.forEach((offer, index) => {
-    console.log(`${index + 1}. ${offer.subscriptionName}`);
-    console.log(`   Offer Code: ${offer.offerCode}`);
-    console.log(`   Offer ID: ${offer.offerId}`);
-    console.log();
-  });
-  console.log('─'.repeat(80));
-
-  // Ask for confirmation
-  if (!skipConfirmation) {
-    const confirmed = await askForConfirmation(
-      `\n⚠️  This will delete ${offersToDelete.length} promotional offer(s). This action cannot be undone.\n` +
-      'Do you want to continue? (yes/no): '
-    );
-
-    if (!confirmed) {
-      console.log('\n❌ Rollback cancelled by user');
-      process.exit(0);
-    }
-  }
-
-  if (dryRun) {
-    console.log(`\n✅ DRY RUN: Would delete ${offersToDelete.length} promotional offers`);
-    process.exit(0);
-  }
-
-  // Delete offers
-  console.log('\n🗑️  Deleting promotional offers...\n');
-
-  const results = {
-    deleted: [],
-    failed: []
-  };
-
-  for (const offer of offersToDelete) {
-    try {
-      await promotionalOfferService.deletePromotionalOffer(offer.offerId);
-      results.deleted.push(offer);
-      console.log(`✅ Deleted: ${offer.offerCode} (${offer.subscriptionName})`);
-    } catch (error) {
-      results.failed.push({
-        ...offer,
-        error: error.message
-      });
-      console.log(`❌ Failed: ${offer.offerCode} - ${error.message}`);
-    }
-  }
-
-  // Summary
-  console.log('\n═'.repeat(80));
-  console.log('📊 ROLLBACK SUMMARY');
-  console.log('═'.repeat(80));
-  console.log(`Total Offers: ${offersToDelete.length}`);
-  console.log(`✅ Successfully Deleted: ${results.deleted.length}`);
-  console.log(`❌ Failed: ${results.failed.length}`);
-  console.log('═'.repeat(80));
-
-  if (results.failed.length > 0) {
-    console.log('\n❌ FAILED DELETIONS:\n');
-    results.failed.forEach((failure, index) => {
-      console.log(`${index + 1}. ${failure.subscriptionName}`);
-      console.log(`   Offer Code: ${failure.offerCode}`);
-      console.log(`   Offer ID: ${failure.offerId}`);
-      console.log(`   Error: ${failure.error}`);
-      console.log();
-    });
-  }
-
-  // Save rollback results
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const resultsPath = `./rollback-results-${timestamp}.json`;
-  
-  const outputData = {
-    rollbackFile,
-    operation: 'rollback_promotional_offers',
-    summary: {
-      total: offersToDelete.length,
-      deleted: results.deleted.length,
-      failed: results.failed.length
-    },
-    deleted: results.deleted,
-    failed: results.failed,
-    completedAt: new Date().toISOString()
-  };
-
-  fs.writeFileSync(resultsPath, JSON.stringify(outputData, null, 2));
-  console.log(`\n💾 Rollback results saved to: ${resultsPath}`);
-
-  // Exit with appropriate code
-  process.exit(results.failed.length > 0 ? 1 : 0);
-}
-
-function askForConfirmation(question) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.toLowerCase() === 'yes' || answer.toLowerCase() === 'y');
-    });
-  });
+  return args;
 }
 
 function showHelp() {
   console.log(`
-🗑️  Delete Promotional Offers
-
-Deletes a single promotional offer or performs a bulk rollback from a rollback log.
+Delete promotional offers and deactivate subscription offer codes.
 
 Usage:
-  # Delete a single offer
-  npm run delete-promo-offer <offer-id> [options]
-  
-  # Rollback bulk created offers
-  npm run rollback-promo-offers <rollback-file> [options]
+  node delete-promotional-offers.js --offer-id <id> [options]
+  node delete-promotional-offers.js --offer-code-id <id> [options]
+  node delete-promotional-offers.js --from-json <file> [options]
+  node delete-promotional-offers.js --from-csv  <file> [options]
 
-Arguments:
-  offer-id            UUID of the promotional offer to delete
-  rollback-file       Path to rollback JSON file (created by bulk-create-promo)
+Input (one or more):
+  --offer-id <id>        Promotional offer ID (repeatable)  → DELETE
+  --offer-code-id <id>   Subscription offer code ID (repeatable)  → PATCH active=false
+  --from-json <file>     JSON from get-promotional-offers.js, get-offer-codes.js,
+                         or a bulk-create rollback log
+  --from-csv  <file>     CSV from get-promotional-offers.js or get-offer-codes.js
+                         (default or --summary mode); combined CSVs with a "Type"
+                         column also work
 
 Options:
-  --yes, -y           Skip confirmation prompt
-  --dry-run           Show what would be deleted without actually deleting
-  --help, -h          Show this help message
+  --dry-run              Print what would happen (default if --confirm not passed)
+  --confirm              Actually apply changes
+  --help, -h             Show this help
+
+Notes:
+  Apple does NOT support DELETE on subscriptionOfferCodes. OFFER_CODE rows are
+  deactivated (PATCH active: false) — the offer code itself remains in App Store
+  Connect but can no longer be redeemed.
 
 Examples:
-  # Delete a single offer
-  npm run delete-promo-offer abc123-def456-ghi789
-
-  # Delete without confirmation
-  npm run delete-promo-offer abc123-def456-ghi789 --yes
-
-  # Dry run to see what would be deleted
-  npm run delete-promo-offer abc123-def456-ghi789 --dry-run
-
-  # Rollback bulk created offers
-  npm run rollback-promo-offers rollback-Group-1-2025-01-10T12-30-00.json
-
-  # Rollback without confirmation
-  npm run rollback-promo-offers rollback-Group-1-2025-01-10T12-30-00.json --yes
-
-Rollback Files:
-  - Automatically created by bulk-create-promo command
-  - Contains IDs of all successfully created offers
-  - Format: rollback-<reference>-<timestamp>.json
-  - Located in project root directory
-
-Important Notes:
-  - Deletion is permanent and cannot be undone
-  - Apple's API does not support transaction rollback
-  - Each offer is deleted individually
-  - If rollback fails partway, some offers may still be deleted
-  - Always use --dry-run first to verify what will be deleted
-
-Related Commands:
-  npm run bulk-create-promo           # Creates rollback log automatically
-  npm run get-promo-offers            # List existing offers
-  npm run create-promo-offer          # Create a single offer
-  `);
+  node delete-promotional-offers.js --offer-id abc123 --confirm
+  node delete-promotional-offers.js --offer-code-id xyz789 --confirm
+  node delete-promotional-offers.js --from-csv promotional-offers-com.example.app-summary-2026-05-03.csv --confirm
+  node delete-promotional-offers.js rollback-Group-1-2026-04-30.json --confirm   # legacy positional rollback
+`);
 }
 
-// Run the script
-deletePromotionalOffers();
+function loadIdsFromJson(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const data = JSON.parse(raw);
+  const promoIds = [];
+  const codeIds = [];
+  const seenPromo = new Set();
+  const seenCode = new Set();
+
+  const pushPromo = (id) => {
+    if (!id || seenPromo.has(id)) return;
+    seenPromo.add(id);
+    promoIds.push(id);
+  };
+  const pushCode = (id) => {
+    if (!id || seenCode.has(id)) return;
+    seenCode.add(id);
+    codeIds.push(id);
+  };
+
+  // get-promotional-offers shapes (default + --summary)
+  for (const sub of data.subscriptions || []) {
+    for (const offer of sub.offers || []) {
+      pushPromo(offer.id);
+      for (const id of offer.offerIds || []) pushPromo(id);
+    }
+    for (const code of sub.offerCodes || []) {
+      pushCode(code.id);
+      for (const id of code.offerIds || []) pushCode(id);
+    }
+  }
+
+  // bulk-create rollback log
+  for (const o of data.createdOffers || []) pushPromo(o.offerId);
+
+  // Generic top-level shapes (default to PROMO since that's the historical use)
+  for (const id of data.offerIds || []) pushPromo(id);
+  for (const o of data.offers || []) pushPromo(o.id || o.offerId);
+  for (const id of data.offerCodeIds || []) pushCode(id);
+
+  return { promoIds, codeIds };
+}
+
+// Minimal RFC-4180-ish CSV parser. Handles quoted fields with embedded commas,
+// escaped quotes (""), and \r\n / \n line endings.
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        field += c;
+      }
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(field); field = '';
+        if (row.length > 1 || row[0] !== '') rows.push(row);
+        row = [];
+      } else {
+        field += c;
+      }
+    }
+  }
+  if (field !== '' || row.length) {
+    row.push(field);
+    if (row.length > 1 || row[0] !== '') rows.push(row);
+  }
+  return rows;
+}
+
+function loadIdsFromCsv(filePath) {
+  const text = fs.readFileSync(filePath, 'utf8');
+  const rows = parseCsv(text);
+  if (rows.length === 0) return { promoIds: [], codeIds: [] };
+
+  const header = rows[0].map(h => h.trim());
+  const typeIdx = header.indexOf('Type');
+
+  // Recognize three CSV shapes:
+  //   1. get-promotional-offers.js (default):  "Offer ID"      column
+  //   2. get-promotional-offers.js (--summary):"Offer IDs"     column (pipe-separated)
+  //   3. get-offer-codes.js (default):         "Offer Code ID" column
+  //   4. get-offer-codes.js (--summary):       "Offer Code IDs"column (pipe-separated)
+  //   5. Combined CSVs with a "Type" column:   "Resource ID"/"Resource IDs"
+  //
+  // Each ID is routed to promo or code based on which column it came from
+  // (or, for combined CSVs, the row's Type value).
+  const promoSingleIdx = header.indexOf('Offer ID');
+  const promoMultiIdx  = header.indexOf('Offer IDs');
+  const codeSingleIdx  = header.indexOf('Offer Code ID');
+  const codeMultiIdx   = header.indexOf('Offer Code IDs');
+  const resourceSingleIdx = header.indexOf('Resource ID');
+  const resourceMultiIdx  = header.indexOf('Resource IDs');
+
+  const noColumns = [promoSingleIdx, promoMultiIdx, codeSingleIdx, codeMultiIdx, resourceSingleIdx, resourceMultiIdx]
+    .every(i => i === -1);
+  if (noColumns) {
+    throw new Error(
+      `CSV missing ID column. Expected one of: "Offer ID"/"Offer IDs" (promotional), ` +
+      `"Offer Code ID"/"Offer Code IDs" (offer codes), or "Resource ID"/"Resource IDs" (combined). ` +
+      `Found: ${header.join(', ')}`
+    );
+  }
+
+  const promoIds = [];
+  const codeIds = [];
+  const seenPromo = new Set();
+  const seenCode = new Set();
+
+  const pushPromo = (id) => {
+    const t = (id || '').trim();
+    if (!t || seenPromo.has(t)) return;
+    seenPromo.add(t);
+    promoIds.push(t);
+  };
+  const pushCode = (id) => {
+    const t = (id || '').trim();
+    if (!t || seenCode.has(t)) return;
+    seenCode.add(t);
+    codeIds.push(t);
+  };
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (promoSingleIdx !== -1) pushPromo(row[promoSingleIdx]);
+    if (codeSingleIdx !== -1)  pushCode(row[codeSingleIdx]);
+    if (promoMultiIdx !== -1) {
+      for (const id of (row[promoMultiIdx] || '').split('|')) pushPromo(id);
+    }
+    if (codeMultiIdx !== -1) {
+      for (const id of (row[codeMultiIdx] || '').split('|')) pushCode(id);
+    }
+    // Combined CSV path: route by Type column.
+    if (resourceSingleIdx !== -1 || resourceMultiIdx !== -1) {
+      const type = typeIdx !== -1 ? (row[typeIdx] || '').trim() : '';
+      const push = type === 'OFFER_CODE' ? pushCode : pushPromo;
+      if (resourceSingleIdx !== -1) push(row[resourceSingleIdx]);
+      if (resourceMultiIdx !== -1) {
+        for (const id of (row[resourceMultiIdx] || '').split('|')) push(id);
+      }
+    }
+  }
+  return { promoIds, codeIds };
+}
+
+async function deletePromo(offerId, args) {
+  console.log(`\n→ [PROMO]  ${offerId}`);
+  if (args.dryRun) {
+    console.log(`    [DRY-RUN] Would delete`);
+    return { offerId, type: 'PROMO', status: 'dry-run' };
+  }
+
+  try {
+    await promotionalOfferService.deletePromotionalOffer(offerId);
+    console.log(`    [DELETED]`);
+    return { offerId, type: 'PROMO', status: 'deleted' };
+  } catch (error) {
+    console.error(`    [ERROR] ${error.message}`);
+    return { offerId, type: 'PROMO', status: 'failed', error: error.message };
+  }
+}
+
+async function deactivateCode(offerCodeId, args) {
+  console.log(`\n→ [CODE]   ${offerCodeId}`);
+  if (args.dryRun) {
+    console.log(`    [DRY-RUN] Would deactivate (PATCH active=false)`);
+    return { offerId: offerCodeId, type: 'OFFER_CODE', status: 'dry-run' };
+  }
+
+  try {
+    await promotionalOfferService.deactivateOfferCode(offerCodeId);
+    console.log(`    [DEACTIVATED]`);
+    return { offerId: offerCodeId, type: 'OFFER_CODE', status: 'deactivated' };
+  } catch (error) {
+    console.error(`    [ERROR] ${error.message}`);
+    return { offerId: offerCodeId, type: 'OFFER_CODE', status: 'failed', error: error.message };
+  }
+}
+
+async function main() {
+  const args = parseArgs(process.argv);
+
+  if (args.help) {
+    showHelp();
+    process.exit(0);
+  }
+
+  if (!args.confirm && !args.dryRun) args.dryRun = true;
+
+  let promoIds = [...args.promoIds];
+  let codeIds = [...args.offerCodeIds];
+
+  if (args.fromJson) {
+    try {
+      const { promoIds: pj, codeIds: cj } = loadIdsFromJson(args.fromJson);
+      promoIds.push(...pj);
+      codeIds.push(...cj);
+    } catch (error) {
+      console.error(`Error reading ${args.fromJson}: ${error.message}`);
+      process.exit(1);
+    }
+  }
+  if (args.fromCsv) {
+    try {
+      const { promoIds: pc, codeIds: cc } = loadIdsFromCsv(args.fromCsv);
+      promoIds.push(...pc);
+      codeIds.push(...cc);
+    } catch (error) {
+      console.error(`Error reading ${args.fromCsv}: ${error.message}`);
+      process.exit(1);
+    }
+  }
+
+  promoIds = [...new Set(promoIds)];
+  codeIds = [...new Set(codeIds)];
+
+  if (promoIds.length === 0 && codeIds.length === 0) {
+    console.error('Error: no IDs specified (use --offer-id, --offer-code-id, --from-json, or --from-csv)');
+    showHelp();
+    process.exit(1);
+  }
+
+  console.log('─'.repeat(80));
+  console.log('DELETE promotional offers / DEACTIVATE offer codes');
+  console.log(`  Promotional offers to DELETE:    ${promoIds.length}`);
+  console.log(`  Offer codes to DEACTIVATE:       ${codeIds.length}`);
+  console.log(`  Mode: ${args.dryRun ? 'DRY-RUN (no changes)' : 'LIVE'}`);
+  console.log('─'.repeat(80));
+
+  const results = [];
+  for (const id of promoIds) results.push(await deletePromo(id, args));
+  for (const id of codeIds)  results.push(await deactivateCode(id, args));
+
+  const summary = results.reduce((acc, r) => {
+    const key = `${r.type}:${r.status}`;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  console.log('\n' + '─'.repeat(80));
+  console.log('Summary:');
+  for (const [key, count] of Object.entries(summary)) {
+    console.log(`  ${key}: ${count}`);
+  }
+  console.log('─'.repeat(80));
+
+  if (args.dryRun && !args.confirm) {
+    console.log('\nThis was a dry run. Re-run with --confirm to apply changes.');
+  }
+
+  const failed = results.filter(r => r.status === 'failed').length;
+  process.exit(failed > 0 ? 1 : 0);
+}
+
+main().catch(error => {
+  console.error(`Fatal: ${error.message}`);
+  logger.error('delete-promotional-offers failed', {
+    error: error.message,
+    stack: error.stack
+  });
+  process.exit(1);
+});

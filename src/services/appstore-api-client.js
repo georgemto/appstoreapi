@@ -1,4 +1,4 @@
-const { ApiClient, AppsApi, BuildsApi, CertificatesApi, DevicesApi, ProfilesApi, BundleIdsApi, BetaGroupsApi, BetaTestersApi, AppStoreVersionsApi, SubscriptionPromotionalOffersApi, SubscriptionsApi, SubscriptionIntroductoryOffersApi } = require('app_store_connect_api');
+const { ApiClient, AppsApi, BuildsApi, CertificatesApi, DevicesApi, ProfilesApi, BundleIdsApi, BetaGroupsApi, BetaTestersApi, AppStoreVersionsApi, SubscriptionPromotionalOffersApi, SubscriptionsApi, SubscriptionIntroductoryOffersApi, SubscriptionLocalizationsApi } = require('app_store_connect_api');
 const authService = require('./auth');
 const logger = require('../utils/logger');
 const { config } = require('../config/appstore');
@@ -26,6 +26,7 @@ class AppStoreConnectAPIClient {
     this.subscriptionPromotionalOffersApi = new SubscriptionPromotionalOffersApi(this.apiClient);
     this.subscriptionsApi = new SubscriptionsApi(this.apiClient);
     this.subscriptionIntroductoryOffersApi = new SubscriptionIntroductoryOffersApi(this.apiClient);
+    this.subscriptionLocalizationsApi = new SubscriptionLocalizationsApi(this.apiClient);
   }
 
   /**
@@ -503,6 +504,66 @@ class AppStoreConnectAPIClient {
     return this.executeApiCall(
       (callback) => this.subscriptionIntroductoryOffersApi.subscriptionIntroductoryOffersDeleteInstance(id, callback),
       'deleteIntroductoryOffer',
+      { id }
+    );
+  }
+
+  // Subscription Localizations API methods
+  async createSubscriptionLocalization(subscriptionLocalizationCreateRequest) {
+    // Use direct HTTP client to avoid deserialization issues
+    const appStoreClient = require('./appstore-client');
+    try {
+      const response = await appStoreClient.post(
+        '/subscriptionLocalizations',
+        subscriptionLocalizationCreateRequest
+      );
+      logger.info('createSubscriptionLocalization completed successfully', {
+        localizationId: response.data?.id,
+        locale: response.data?.attributes?.locale
+      });
+      return response;
+    } catch (error) {
+      logger.error('createSubscriptionLocalization failed', {
+        error: error.message,
+        status: error.status || error.statusCode
+      });
+      throw error;
+    }
+  }
+
+  async getSubscriptionLocalization(id, opts = {}) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionLocalizationsApi.subscriptionLocalizationsGetInstance(id, opts, callback),
+      'getSubscriptionLocalization',
+      { id, ...opts }
+    );
+  }
+
+  async updateSubscriptionLocalization(id, subscriptionLocalizationUpdateRequest) {
+    // Use direct HTTP client for consistency
+    const appStoreClient = require('./appstore-client');
+    try {
+      const response = await appStoreClient.patch(
+        `/subscriptionLocalizations/${id}`,
+        subscriptionLocalizationUpdateRequest
+      );
+      logger.info('updateSubscriptionLocalization completed successfully', {
+        localizationId: response.data?.id
+      });
+      return response;
+    } catch (error) {
+      logger.error('updateSubscriptionLocalization failed', {
+        error: error.message,
+        status: error.status || error.statusCode
+      });
+      throw error;
+    }
+  }
+
+  async deleteSubscriptionLocalization(id) {
+    return this.executeApiCall(
+      (callback) => this.subscriptionLocalizationsApi.subscriptionLocalizationsDeleteInstance(id, callback),
+      'deleteSubscriptionLocalization',
       { id }
     );
   }

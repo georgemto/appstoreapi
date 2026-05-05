@@ -86,7 +86,7 @@ The database file is automatically created when first needed. The `data/` direct
 
 #### Default (with cache)
 ```bash
-npm run get-product-ids com.vtech.plus.inapp.ios.test3
+npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3
 ```
 
 **Behavior**:
@@ -95,14 +95,14 @@ npm run get-product-ids com.vtech.plus.inapp.ios.test3
 
 #### Force Fresh Fetch
 ```bash
-npm run get-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
+npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
 ```
 
 **Behavior**: Always fetches from API, updates database cache
 
 #### Skip Database Save
 ```bash
-npm run get-product-ids com.vtech.plus.inapp.ios.test3 --no-save
+npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3 --no-save
 ```
 
 **Behavior**: Fetches from API but doesn't save to database
@@ -366,7 +366,7 @@ sqlite3 data/subscriptions.db "PRAGMA integrity_check;"
 
 # If corrupted, delete and rebuild
 rm data/subscriptions.db
-npm run get-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
+npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
 ```
 
 ### Outdated Cache
@@ -376,7 +376,7 @@ npm run get-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
 **Solution**:
 ```bash
 # Force refresh from API
-npm run get-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
+npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
 ```
 
 ### Database Not Created
@@ -389,7 +389,7 @@ npm run get-product-ids com.vtech.plus.inapp.ios.test3 --no-cache
 mkdir -p data
 
 # Run script to initialize
-npm run get-product-ids com.vtech.plus.inapp.ios.test3
+npm run get-subscription-product-ids com.vtech.plus.inapp.ios.test3
 ```
 
 ## Integration Examples

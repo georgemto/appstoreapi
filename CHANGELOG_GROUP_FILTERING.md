@@ -47,10 +47,10 @@ Added support for using `"*"` as the reference name to create promotional offers
 
 ```bash
 # Create for specific group (exact match)
-npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "Group 1" --name "Spring Sale"
+npm run bulk-create-promotional-offers -- com.vtech.plus.inapp.ios.test3 "Group 1" --name "Spring Sale"
 
 # Create for ALL groups (wildcard)
-npm run bulk-create-promo -- com.vtech.plus.inapp.ios.test3 "*" --name "Holiday Sale"
+npm run bulk-create-promotional-offers -- com.vtech.plus.inapp.ios.test3 "*" --name "Holiday Sale"
 ```
 
 ### Behavior

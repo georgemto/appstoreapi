@@ -1,11 +1,99 @@
 const appStoreClient = require('./appstore-client');
-const { config, ALL_TERRITORIES } = require('../config/appstore');
+const appStoreAPIClient = require('./appstore-api-client');
+const { config } = require('../config/appstore');
 const { NotFoundError, ValidationError, AppleAPIError } = require('../utils/errors');
 const logger = require('../utils/logger');
 
 class SubscriptionService {
   constructor() {
     this.endpoints = config.endpoints;
+    // Cache for available territories (shared across all subscriptions)
+    this._cachedTerritories = null;
+  }
+
+  /**
+   * Get available territories for subscription pricing.
+   * Fetches from the dedicated Territories API and caches the result.
+   * @param {Object} options - Options
+   * @param {boolean} options.forceRefresh - Force refresh the cache from API
+   * @returns {Array<string>} Array of territory codes
+   */
+  async getAvailableTerritories(options = {}) {
+    const { forceRefresh = false } = options;
+
+    // Return cached territories if available and not forcing refresh
+    if (this._cachedTerritories && !forceRefresh) {
+      logger.info(`Using cached territories (${this._cachedTerritories.length} territories)`);
+      return this._cachedTerritories;
+    }
+
+    // Fetch territories from the dedicated Territories API
+    logger.info('Fetching territories from Territories API...');
+    const territories = await this.getAllTerritories();
+    
+    // Cache the result
+    this._cachedTerritories = territories;
+    logger.info(`Cached ${territories.length} territories from API`);
+
+    return territories;
+  }
+
+  /**
+   * Fetch all territories from the dedicated Territories API.
+   * Handles pagination to get all available territories.
+   * @returns {Array<string>} Array of territory codes (e.g., 'USA', 'GBR', 'CAN')
+   */
+  async getAllTerritories() {
+    try {
+      const allTerritories = [];
+      let nextUrl = null;
+
+      // First request
+      const params = {
+        'fields[territories]': 'currency',
+        limit: 200
+      };
+
+      let response = await appStoreClient.get('/territories', params);
+      
+      if (response.data) {
+        for (const territory of response.data) {
+          if (territory.id) {
+            allTerritories.push(territory.id);
+          }
+        }
+      }
+
+      // Handle pagination
+      nextUrl = response.links?.next;
+      while (nextUrl) {
+        response = await appStoreClient.getNextPage(nextUrl);
+        
+        if (response.data) {
+          for (const territory of response.data) {
+            if (territory.id) {
+              allTerritories.push(territory.id);
+            }
+          }
+        }
+        
+        nextUrl = response.links?.next;
+      }
+
+      logger.info(`Retrieved ${allTerritories.length} territories from Territories API`);
+      return allTerritories;
+    } catch (error) {
+      logger.error('Failed to fetch territories from API:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear the cached territories
+   */
+  clearTerritoriesCache() {
+    this._cachedTerritories = null;
+    logger.info('Territories cache cleared');
   }
 
   /**
@@ -435,7 +523,8 @@ class SubscriptionService {
    */
   buildPricePointId(subscriptionId, territory, priceTier) {
     const data = { s: subscriptionId, t: territory, p: priceTier };
-    return Buffer.from(JSON.stringify(data)).toString('base64');
+    // Remove padding to match Apple's base64 format (no trailing '=')
+    return Buffer.from(JSON.stringify(data)).toString('base64').replace(/=+$/, '');
   }
 
   /**
@@ -494,13 +583,19 @@ class SubscriptionService {
    * @param {string} usdPrice - USD price (e.g., "12.99")
    * @param {Object} options - Options
    * @param {boolean} options.dryRun - If true, return what would be done without making changes
+   * @param {boolean} options.forceRefreshTerritories - Force refresh territories cache from API
    * @param {Function} options.onProgress - Progress callback (territory, success, error)
    * @returns {Object} Results with success/failure counts
    */
   async setSubscriptionPricesAllTerritories(subscriptionId, usdPrice, options = {}) {
-    const { dryRun = false, onProgress = null } = options;
+    const { dryRun = false, forceRefreshTerritories = false, onProgress = null } = options;
 
-    // First, find the USD price point to get the tier
+    // Get territories from cache (or fetch once if not cached)
+    const territories = await this.getAvailableTerritories({ 
+      forceRefresh: forceRefreshTerritories 
+    });
+
+    // Find the USD price point to get the tier (only fetch USA price points)
     const usdPricePointId = await this.findPricePointByPrice(subscriptionId, usdPrice, 'USA');
     if (!usdPricePointId) {
       throw new ValidationError(`No price point found for $${usdPrice} USD`);
@@ -508,9 +603,6 @@ class SubscriptionService {
 
     const priceTier = this.getPriceTierFromPricePointId(usdPricePointId);
     logger.info(`Found price tier ${priceTier} for $${usdPrice} USD`);
-
-    // Use static territories list instead of fetching price points
-    const territories = ALL_TERRITORIES;
     
     logger.info(`Setting prices for ${territories.length} territories`);
 
@@ -553,6 +645,302 @@ class SubscriptionService {
 
     logger.info(`Set prices for ${results.success}/${results.total} territories`);
     return results;
+  }
+
+  /**
+   * Set subscription availability (stop / start sale, change territories).
+   *
+   * Posts to /v1/subscriptionAvailabilities. Each POST replaces the prior
+   * availability configuration for the subscription.
+   *
+   * Stop sale: pass an empty `territories` array and `availableInNewTerritories: false`.
+   * This prevents NEW purchases. Existing subscribers continue to renew —
+   * Apple does not cancel active subscriptions when territories are removed.
+   *
+   * @param {string} subscriptionId
+   * @param {Object} options
+   * @param {boolean} [options.availableInNewTerritories=false] - auto-rollout to new Apple territories
+   * @param {Array<string>} [options.territories=[]] - territory codes (e.g. ['USA','GBR']); empty = unavailable everywhere
+   * @returns {Object} API response
+   */
+  async setSubscriptionAvailability(subscriptionId, options = {}) {
+    if (!subscriptionId) {
+      throw new ValidationError('Subscription ID is required');
+    }
+
+    const { availableInNewTerritories = false, territories = [] } = options;
+
+    const payload = {
+      data: {
+        type: 'subscriptionAvailabilities',
+        attributes: {
+          availableInNewTerritories: !!availableInNewTerritories
+        },
+        relationships: {
+          subscription: {
+            data: { type: 'subscriptions', id: subscriptionId }
+          },
+          availableTerritories: {
+            data: territories.map(t => ({ type: 'territories', id: t }))
+          }
+        }
+      }
+    };
+
+    try {
+      const response = await appStoreClient.post('/subscriptionAvailabilities', payload);
+      logger.info(`Set availability for subscription ${subscriptionId}`, {
+        availableInNewTerritories: !!availableInNewTerritories,
+        territoryCount: territories.length
+      });
+      return response;
+    } catch (error) {
+      logger.error(`Failed to set subscription availability ${subscriptionId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Stop sale of a subscription — convenience wrapper around setSubscriptionAvailability.
+   * Removes from all territories and disables auto-rollout to new ones.
+   *
+   * Note: existing subscribers keep their subscription and continue to renew.
+   * @param {string} subscriptionId
+   * @returns {Object} API response
+   */
+  async stopSaleSubscription(subscriptionId) {
+    return this.setSubscriptionAvailability(subscriptionId, {
+      availableInNewTerritories: false,
+      territories: []
+    });
+  }
+
+  /**
+   * Get subscription localizations for a subscription
+   * @param {string} subscriptionId - Subscription ID
+   * @returns {Object} Localizations data
+   */
+  async getSubscriptionLocalizations(subscriptionId) {
+    try {
+      if (!subscriptionId) {
+        throw new ValidationError('Subscription ID is required');
+      }
+
+      const params = appStoreClient.buildParams(
+        {},
+        [],
+        {
+          subscriptionLocalizations: ['name', 'description', 'locale', 'state']
+        },
+        null,
+        200
+      );
+
+      const response = await appStoreClient.get(
+        `${this.endpoints.subscriptions}/${subscriptionId}/subscriptionLocalizations`,
+        params
+      );
+
+      logger.info(`Retrieved localizations for subscription: ${subscriptionId}`, {
+        count: response.data?.length || 0
+      });
+      return response;
+    } catch (error) {
+      if (error.statusCode === 404) {
+        throw new NotFoundError(`Subscription with ID ${subscriptionId} not found`);
+      }
+      logger.error(`Failed to get subscription localizations ${subscriptionId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a specific subscription localization by ID
+   * @param {string} localizationId - Localization ID
+   * @returns {Object} Localization data
+   */
+  async getSubscriptionLocalizationById(localizationId) {
+    try {
+      if (!localizationId) {
+        throw new ValidationError('Localization ID is required');
+      }
+
+      const response = await appStoreClient.get(
+        `/subscriptionLocalizations/${localizationId}`,
+        {
+          'fields[subscriptionLocalizations]': 'name,description,locale,state'
+        }
+      );
+
+      if (!response.data) {
+        throw new NotFoundError(`Subscription localization with ID ${localizationId} not found`);
+      }
+
+      logger.info(`Retrieved subscription localization: ${localizationId}`);
+      return response;
+    } catch (error) {
+      if (error.statusCode === 404) {
+        throw new NotFoundError(`Subscription localization with ID ${localizationId} not found`);
+      }
+      logger.error(`Failed to get subscription localization ${localizationId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new subscription localization
+   * @param {string} subscriptionId - Subscription ID
+   * @param {Object} localizationData - Localization data
+   * @param {string} localizationData.locale - Locale code (e.g., 'en-US', 'de-DE')
+   * @param {string} localizationData.name - Display name
+   * @param {string} localizationData.description - Description
+   * @returns {Object} Created localization
+   */
+  async createSubscriptionLocalization(subscriptionId, localizationData) {
+    try {
+      if (!subscriptionId) {
+        throw new ValidationError('Subscription ID is required');
+      }
+
+      this.validateLocalizationData(localizationData);
+
+      const payload = {
+        data: {
+          type: 'subscriptionLocalizations',
+          attributes: {
+            locale: localizationData.locale,
+            name: localizationData.name,
+            description: localizationData.description || ''
+          },
+          relationships: {
+            subscription: {
+              data: {
+                type: 'subscriptions',
+                id: subscriptionId
+              }
+            }
+          }
+        }
+      };
+
+      const response = await appStoreAPIClient.createSubscriptionLocalization(payload);
+
+      logger.info(`Created subscription localization`, {
+        subscriptionId,
+        locale: localizationData.locale,
+        localizationId: response.data?.id
+      });
+      return response;
+    } catch (error) {
+      logger.error('Failed to create subscription localization:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update an existing subscription localization
+   * @param {string} localizationId - Localization ID
+   * @param {Object} updateData - Update data
+   * @param {string} [updateData.name] - Display name
+   * @param {string} [updateData.description] - Description
+   * @returns {Object} Updated localization
+   */
+  async updateSubscriptionLocalization(localizationId, updateData) {
+    try {
+      if (!localizationId) {
+        throw new ValidationError('Localization ID is required');
+      }
+
+      // Build the update payload with only provided fields
+      const attributes = {};
+      const allowedUpdates = ['name', 'description'];
+
+      allowedUpdates.forEach(field => {
+        if (updateData[field] !== undefined) {
+          attributes[field] = updateData[field];
+        }
+      });
+
+      if (Object.keys(attributes).length === 0) {
+        throw new ValidationError('No valid update fields provided. Allowed fields: name, description');
+      }
+
+      const payload = {
+        data: {
+          type: 'subscriptionLocalizations',
+          id: localizationId,
+          attributes
+        }
+      };
+
+      const response = await appStoreAPIClient.updateSubscriptionLocalization(localizationId, payload);
+
+      logger.info(`Updated subscription localization: ${localizationId}`, {
+        updatedFields: Object.keys(attributes)
+      });
+      return response;
+    } catch (error) {
+      if (error.statusCode === 404) {
+        throw new NotFoundError(`Subscription localization with ID ${localizationId} not found`);
+      }
+      logger.error(`Failed to update subscription localization ${localizationId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a subscription localization
+   * @param {string} localizationId - Localization ID
+   * @returns {Object} Success result
+   */
+  async deleteSubscriptionLocalization(localizationId) {
+    try {
+      if (!localizationId) {
+        throw new ValidationError('Localization ID is required');
+      }
+
+      await appStoreClient.delete(`/subscriptionLocalizations/${localizationId}`);
+
+      logger.info(`Deleted subscription localization: ${localizationId}`);
+      return { success: true, message: 'Subscription localization deleted successfully' };
+    } catch (error) {
+      if (error.statusCode === 404) {
+        throw new NotFoundError(`Subscription localization with ID ${localizationId} not found`);
+      }
+      logger.error(`Failed to delete subscription localization ${localizationId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Validate localization data for creation
+   * @param {Object} data - Localization data
+   */
+  validateLocalizationData(data) {
+    const required = ['locale', 'name'];
+    const missing = required.filter(field => !data[field]);
+
+    if (missing.length > 0) {
+      throw new ValidationError(`Missing required fields: ${missing.join(', ')}`);
+    }
+
+    // Validate locale format (should be like 'en-US', 'de-DE', etc.)
+    const localeRegex = /^[a-z]{2}(-[A-Z]{2})?$/;
+    if (!localeRegex.test(data.locale)) {
+      throw new ValidationError(
+        'Invalid locale format. Expected format: "en-US" or "en"'
+      );
+    }
+
+    // Validate name length
+    if (data.name.length > 30) {
+      throw new ValidationError('Name cannot exceed 30 characters');
+    }
+
+    // Validate description length if provided
+    if (data.description && data.description.length > 45) {
+      throw new ValidationError('Description cannot exceed 45 characters');
+    }
   }
 }
 

@@ -786,28 +786,25 @@ class PromotionalOfferService {
         throw new ValidationError('Subscription ID is required');
       }
 
-      const params = appStoreClient.buildParams(
-        {},
-        ['promotionalOffers'],
+      // Use the dedicated /subscriptions/{id}/promotionalOffers endpoint with
+      // pagination. The previous ?include=promotionalOffers shape was capped
+      // by Apple's default limit[promotionalOffers], silently truncating the
+      // list for subscriptions with many offers.
+      const offers = [];
+      let response = await appStoreClient.get(
+        `${this.endpoints.subscriptions}/${subscriptionId}/promotionalOffers`,
         {
-          subscriptions: ['name', 'productId'],
-          subscriptionPromotionalOffers: ['name', 'offerCode', 'duration', 'offerMode', 'numberOfPeriods']
+          'fields[subscriptionPromotionalOffers]':
+            'name,offerCode,duration,offerMode,numberOfPeriods',
+          limit: 200
         }
       );
 
-      const response = await appStoreClient.get(
-        `${this.endpoints.subscriptions}/${subscriptionId}`,
-        params
-      );
-
-      // Extract promotional offers from included resources
-      const offers = [];
-      if (response.included) {
-        response.included.forEach(item => {
-          if (item.type === 'subscriptionPromotionalOffers') {
-            offers.push(item);
-          }
-        });
+      while (response && response.data) {
+        offers.push(...response.data);
+        const nextUrl = response.links?.next;
+        if (!nextUrl) break;
+        response = await appStoreClient.getNextPage(nextUrl);
       }
 
       logger.info(`Retrieved ${offers.length} promotional offers for subscription ${subscriptionId}`);
@@ -817,6 +814,83 @@ class PromotionalOfferService {
         throw new NotFoundError(`Subscription with ID ${subscriptionId} not found`);
       }
       logger.error(`Failed to get promotional offers for subscription ${subscriptionId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all subscription offer codes for a subscription.
+   * These are a distinct App Store Connect resource from promotional offers
+   * (subscriptionOfferCodes vs subscriptionPromotionalOffers).
+   * @param {string} subscriptionId - Subscription ID
+   * @returns {array} Array of subscription offer code resources
+   */
+  async getOfferCodesForSubscription(subscriptionId) {
+    try {
+      if (!subscriptionId) {
+        throw new ValidationError('Subscription ID is required');
+      }
+
+      const offerCodes = [];
+      let response = await appStoreClient.get(
+        `${this.endpoints.subscriptions}/${subscriptionId}/offerCodes`,
+        {
+          'fields[subscriptionOfferCodes]':
+            'name,customerEligibilities,offerEligibility,duration,offerMode,numberOfPeriods,totalNumberOfCodes,active',
+          limit: 200
+        }
+      );
+
+      while (response && response.data) {
+        offerCodes.push(...response.data);
+        const nextUrl = response.links?.next;
+        if (!nextUrl) break;
+        response = await appStoreClient.getNextPage(nextUrl);
+      }
+
+      logger.info(`Retrieved ${offerCodes.length} subscription offer codes for subscription ${subscriptionId}`);
+      return offerCodes;
+    } catch (error) {
+      if (error.statusCode === 404) {
+        throw new NotFoundError(`Subscription with ID ${subscriptionId} not found`);
+      }
+      logger.error(`Failed to get subscription offer codes for subscription ${subscriptionId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Deactivate a subscription offer code. Apple does NOT support DELETE on
+   * subscriptionOfferCodes — the supported "remove" path is to PATCH
+   * `active: false`, which stops the code from being redeemable.
+   * @param {string} offerCodeId - Subscription offer code ID
+   * @returns {object} Updated offer code
+   */
+  async deactivateOfferCode(offerCodeId) {
+    if (!offerCodeId) {
+      throw new ValidationError('Offer code ID is required');
+    }
+
+    const payload = {
+      data: {
+        type: 'subscriptionOfferCodes',
+        id: offerCodeId,
+        attributes: { active: false }
+      }
+    };
+
+    try {
+      const response = await appStoreClient.patch(
+        `/subscriptionOfferCodes/${encodeURIComponent(offerCodeId)}`,
+        payload
+      );
+      logger.info(`Deactivated subscription offer code: ${offerCodeId}`);
+      return response;
+    } catch (error) {
+      if (error.status === 404 || error.statusCode === 404) {
+        throw new NotFoundError(`Subscription offer code with ID ${offerCodeId} not found`);
+      }
+      logger.error(`Failed to deactivate subscription offer code ${offerCodeId}:`, error);
       throw error;
     }
   }
@@ -833,7 +907,7 @@ class PromotionalOfferService {
         throw new ValidationError('Bundle ID is required');
       }
 
-      const { referenceName, limit = 200 } = options;
+      const { referenceName, limit = 200, includeOfferCodes = true } = options;
 
       // Get all subscriptions for the bundle ID
       const subscriptionsData = await appService.getSubscriptionProductIdsByBundleId(bundleId, {
@@ -863,45 +937,71 @@ class PromotionalOfferService {
         // For now, get all offers and let the client filter if needed
       }
 
-      // Get promotional offers for each subscription
+      // Get promotional offers (and optionally offer codes) for each subscription
       const results = [];
       let totalOffers = 0;
+      let totalOfferCodes = 0;
 
       for (const subscription of filteredSubscriptions.slice(0, limit)) {
+        let offers = [];
+        let offerCodes = [];
+
         try {
-          const offers = await this.getPromotionalOffersForSubscription(subscription.id);
-          
-          if (offers.length > 0) {
-            results.push({
-              subscription: {
-                id: subscription.id,
-                name: subscription.name,
-                productId: subscription.productId
-              },
-              offers: offers.map(offer => ({
-                id: offer.id,
-                name: offer.attributes?.name,
-                offerCode: offer.attributes?.offerCode,
-                duration: offer.attributes?.duration,
-                offerMode: offer.attributes?.offerMode,
-                numberOfPeriods: offer.attributes?.numberOfPeriods
-              }))
-            });
-            totalOffers += offers.length;
-          }
+          offers = await this.getPromotionalOffersForSubscription(subscription.id);
         } catch (error) {
           logger.warn(`Failed to get offers for subscription ${subscription.id}:`, error.message);
         }
+
+        if (includeOfferCodes) {
+          try {
+            offerCodes = await this.getOfferCodesForSubscription(subscription.id);
+          } catch (error) {
+            logger.warn(`Failed to get offer codes for subscription ${subscription.id}:`, error.message);
+          }
+        }
+
+        if (offers.length === 0 && offerCodes.length === 0) continue;
+
+        results.push({
+          subscription: {
+            id: subscription.id,
+            name: subscription.name,
+            productId: subscription.productId
+          },
+          offers: offers.map(offer => ({
+            id: offer.id,
+            name: offer.attributes?.name,
+            offerCode: offer.attributes?.offerCode,
+            duration: offer.attributes?.duration,
+            offerMode: offer.attributes?.offerMode,
+            numberOfPeriods: offer.attributes?.numberOfPeriods
+          })),
+          offerCodes: offerCodes.map(code => ({
+            id: code.id,
+            name: code.attributes?.name,
+            duration: code.attributes?.duration,
+            offerMode: code.attributes?.offerMode,
+            numberOfPeriods: code.attributes?.numberOfPeriods,
+            totalNumberOfCodes: code.attributes?.totalNumberOfCodes,
+            active: code.attributes?.active,
+            customerEligibilities: code.attributes?.customerEligibilities,
+            offerEligibility: code.attributes?.offerEligibility
+          }))
+        });
+        totalOffers += offers.length;
+        totalOfferCodes += offerCodes.length;
       }
 
-      logger.info(`Retrieved ${totalOffers} promotional offers for bundle ID ${bundleId}`);
-      
+      logger.info(`Retrieved ${totalOffers} promotional offers and ${totalOfferCodes} offer codes for bundle ID ${bundleId}`);
+
       return {
         bundleId,
         appName: subscriptionsData.appName,
         referenceName: referenceName || null,
+        includeOfferCodes,
         subscriptions: results,
-        totalOffers
+        totalOffers,
+        totalOfferCodes
       };
     } catch (error) {
       logger.error(`Failed to get promotional offers for bundle ID ${bundleId}:`, error);
@@ -969,7 +1069,7 @@ class PromotionalOfferService {
 
       // Filter subscriptions to only those belonging to matching groups
       const matchingGroupIds = matchingGroups.map(g => g.id);
-      const filteredSubscriptions = allSubscriptions.filter(sub => {
+      let filteredSubscriptions = allSubscriptions.filter(sub => {
         return matchingGroupIds.includes(sub.groupId);
       });
 
@@ -977,6 +1077,38 @@ class PromotionalOfferService {
         throw new ValidationError(
           `No subscriptions found in ${isAllGroups ? 'any groups' : `group "${referenceName}"`} for bundle ID ${bundleId}`
         );
+      }
+
+      // Optional name-substring filter (case-insensitive) — narrows subscriptions by display/reference name
+      if (offerTemplate.nameMatch) {
+        const needle = offerTemplate.nameMatch.toLowerCase();
+        const before = filteredSubscriptions.length;
+        filteredSubscriptions = filteredSubscriptions.filter(
+          sub => (sub.name || '').toLowerCase().includes(needle)
+        );
+        logger.info(`Name filter "${offerTemplate.nameMatch}" reduced ${before} → ${filteredSubscriptions.length} subscriptions`);
+
+        if (filteredSubscriptions.length === 0) {
+          throw new ValidationError(
+            `No subscriptions matched name filter "${offerTemplate.nameMatch}" in ${isAllGroups ? 'any groups' : `group "${referenceName}"`}`
+          );
+        }
+      }
+
+      // Optional subscriptionPeriod filter — e.g. planPeriodFilter: ['ONE_MONTH'] keeps only monthly plans
+      if (offerTemplate.planPeriodFilter && offerTemplate.planPeriodFilter.length > 0) {
+        const allowed = new Set(offerTemplate.planPeriodFilter);
+        const before = filteredSubscriptions.length;
+        filteredSubscriptions = filteredSubscriptions.filter(
+          sub => sub.subscriptionPeriod && allowed.has(sub.subscriptionPeriod)
+        );
+        logger.info(`Plan-period filter [${[...allowed].join(', ')}] reduced ${before} → ${filteredSubscriptions.length} subscriptions`);
+
+        if (filteredSubscriptions.length === 0) {
+          throw new ValidationError(
+            `No subscriptions matched plan-period filter [${[...allowed].join(', ')}] in ${isAllGroups ? 'any groups' : `group "${referenceName}"`}`
+          );
+        }
       }
 
       logger.info(`Filtered to ${filteredSubscriptions.length} subscriptions in matching group(s)`);

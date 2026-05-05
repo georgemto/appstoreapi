@@ -203,6 +203,99 @@ class SubscriptionController {
       meta: result.meta
     });
   });
+
+  /**
+   * Get subscription localizations
+   * GET /api/subscriptions/:id/localizations
+   */
+  getSubscriptionLocalizations = handleAsyncError(async (req, res) => {
+    const { id } = req.params;
+
+    const result = await subscriptionService.getSubscriptionLocalizations(id);
+
+    res.status(200).json({
+      success: true,
+      data: result.data,
+      meta: result.meta
+    });
+  });
+
+  /**
+   * Get subscription localization by ID
+   * GET /api/subscriptions/localizations/:localizationId
+   */
+  getSubscriptionLocalizationById = handleAsyncError(async (req, res) => {
+    const { localizationId } = req.params;
+
+    const result = await subscriptionService.getSubscriptionLocalizationById(localizationId);
+
+    res.status(200).json({
+      success: true,
+      data: result.data
+    });
+  });
+
+  /**
+   * Create subscription localization
+   * POST /api/subscriptions/:id/localizations
+   */
+  createSubscriptionLocalization = handleAsyncError(async (req, res) => {
+    const { id } = req.params;
+    const localizationData = req.body;
+
+    const result = await subscriptionService.createSubscriptionLocalization(id, localizationData);
+
+    logger.info(`Subscription localization created successfully`, {
+      subscriptionId: id,
+      locale: localizationData.locale,
+      localizationId: result.data?.id
+    });
+
+    res.status(201).json({
+      success: true,
+      data: result.data,
+      message: 'Subscription localization created successfully'
+    });
+  });
+
+  /**
+   * Update subscription localization
+   * PATCH /api/subscriptions/localizations/:localizationId
+   */
+  updateSubscriptionLocalization = handleAsyncError(async (req, res) => {
+    const { localizationId } = req.params;
+    const updateData = req.body;
+
+    const result = await subscriptionService.updateSubscriptionLocalization(localizationId, updateData);
+
+    logger.info(`Subscription localization updated successfully`, {
+      localizationId,
+      updatedFields: Object.keys(updateData)
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result.data,
+      message: 'Subscription localization updated successfully'
+    });
+  });
+
+  /**
+   * Delete subscription localization
+   * DELETE /api/subscriptions/localizations/:localizationId
+   */
+  deleteSubscriptionLocalization = handleAsyncError(async (req, res) => {
+    const { localizationId } = req.params;
+
+    const result = await subscriptionService.deleteSubscriptionLocalization(localizationId);
+
+    logger.info(`Subscription localization deleted successfully`, { localizationId });
+
+    res.status(200).json({
+      success: true,
+      message: result.message
+    });
+  });
 }
 
 // Export controller instance

@@ -113,7 +113,7 @@ Create promotional offers for multiple countries with **automatic price tier con
 npm run get-price-points 6746919022 USA
 
 # Create a global offer with automatic price conversion
-npm run create-promo-offer 6746919022 \
+npm run create-promotional-offer 6746919022 \
   --name "Global Holiday Sale" \
   --mode PAY_AS_YOU_GO \
   --price-point <usa-price-point-id> \

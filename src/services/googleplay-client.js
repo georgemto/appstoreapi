@@ -133,7 +133,7 @@ class GooglePlayClient {
     await this.ensureInitialized();
 
     if (!regionsVersion) {
-      logger.warn('No regionsVersion provided for createSubscription, falling back to 2022/02. Currency mismatches may occur.', {
+      logger.warn('No regionsVersion provided for createSubscription, falling back to 2025/03. Currency mismatches may occur.', {
         packageName,
         productId
       });
@@ -143,7 +143,7 @@ class GooglePlayClient {
       const response = await this.androidPublisher.monetization.subscriptions.create({
         packageName,
         productId,
-        'regionsVersion.version': regionsVersion || '2022/02',
+        'regionsVersion.version': regionsVersion || '2025/03',
         requestBody: subscriptionData
       });
 
@@ -179,6 +179,95 @@ class GooglePlayClient {
   }
 
   /**
+   * Deactivate a base plan for a subscription
+   * @param {string} packageName - The Android package name
+   * @param {string} productId - The subscription product ID
+   * @param {string} basePlanId - The base plan ID
+   * @returns {object} Deactivated subscription
+   */
+  async deactivateBasePlan(packageName, productId, basePlanId) {
+    await this.ensureInitialized();
+
+    try {
+      const response = await this.androidPublisher.monetization.subscriptions.basePlans.deactivate({
+        packageName,
+        productId,
+        basePlanId
+      });
+
+      logger.info(`Deactivated base plan ${basePlanId} for ${productId} in ${packageName}`);
+      return response.data;
+    } catch (error) {
+      this.handleApiError(error, 'deactivateBasePlan', { packageName, productId, basePlanId });
+    }
+  }
+
+  /**
+   * Delete a base plan from a subscription (only works if never published)
+   * @param {string} packageName - The Android package name
+   * @param {string} productId - The subscription product ID
+   * @param {string} basePlanId - The base plan ID
+   */
+  async deleteBasePlan(packageName, productId, basePlanId) {
+    await this.ensureInitialized();
+
+    try {
+      await this.androidPublisher.monetization.subscriptions.basePlans.delete({
+        packageName,
+        productId,
+        basePlanId
+      });
+
+      logger.info(`Deleted base plan ${basePlanId} for ${productId} in ${packageName}`);
+      return { success: true };
+    } catch (error) {
+      this.handleApiError(error, 'deleteBasePlan', { packageName, productId, basePlanId });
+    }
+  }
+
+  /**
+   * Delete a subscription (only works if never published)
+   * @param {string} packageName - The Android package name
+   * @param {string} productId - The subscription product ID
+   */
+  async deleteSubscription(packageName, productId) {
+    await this.ensureInitialized();
+
+    try {
+      await this.androidPublisher.monetization.subscriptions.delete({
+        packageName,
+        productId
+      });
+
+      logger.info(`Deleted subscription ${productId} for package ${packageName}`);
+      return { success: true };
+    } catch (error) {
+      this.handleApiError(error, 'deleteSubscription', { packageName, productId });
+    }
+  }
+
+  /**
+   * Archive a subscription (marks unavailable, use when delete is not allowed)
+   * @param {string} packageName - The Android package name
+   * @param {string} productId - The subscription product ID
+   */
+  async archiveSubscription(packageName, productId) {
+    await this.ensureInitialized();
+
+    try {
+      const response = await this.androidPublisher.monetization.subscriptions.archive({
+        packageName,
+        productId
+      });
+
+      logger.info(`Archived subscription ${productId} for package ${packageName}`);
+      return response.data;
+    } catch (error) {
+      this.handleApiError(error, 'archiveSubscription', { packageName, productId });
+    }
+  }
+
+  /**
    * Create a new subscription offer (base plan offer)
    * @param {string} packageName - The Android package name
    * @param {string} productId - The subscription product ID
@@ -187,7 +276,7 @@ class GooglePlayClient {
    * @param {object} offerData - The offer configuration
    * @returns {object} Created offer
    */
-  async createSubscriptionOffer(packageName, productId, basePlanId, offerId, offerData) {
+  async createSubscriptionOffer(packageName, productId, basePlanId, offerId, offerData, regionsVersion) {
     await this.ensureInitialized();
 
     try {
@@ -196,6 +285,7 @@ class GooglePlayClient {
         productId,
         basePlanId,
         offerId,
+        'regionsVersion.version': regionsVersion || '2025/03',
         requestBody: offerData
       });
 
@@ -293,9 +383,12 @@ class GooglePlayClient {
    * @param {string} offerId - The offer ID
    * @param {object} offerData - The updated offer configuration
    * @param {string} updateMask - Fields to update (comma-separated)
+   * @param {string} regionsVersion - Play "regions version" (e.g. "2025/03"). Required by
+   *   the Play API whenever the patch touches regional pricing (i.e. `phases` or
+   *   `regionalConfigs`); harmless when it doesn't.
    * @returns {object} Updated offer
    */
-  async updateSubscriptionOffer(packageName, productId, basePlanId, offerId, offerData, updateMask) {
+  async updateSubscriptionOffer(packageName, productId, basePlanId, offerId, offerData, updateMask, regionsVersion) {
     await this.ensureInitialized();
 
     try {
@@ -304,6 +397,7 @@ class GooglePlayClient {
         productId,
         basePlanId,
         offerId,
+        'regionsVersion.version': regionsVersion || '2025/03',
         requestBody: offerData
       };
 

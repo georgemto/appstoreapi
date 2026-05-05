@@ -10,10 +10,10 @@ This feature allows you to retrieve all in-app subscription product IDs for an a
 
 ```bash
 # Get product IDs for your app
-npm run get-product-ids com.vtech.plus
+npm run get-subscription-product-ids com.vtech.plus
 
 # Show help
-npm run get-product-ids --help
+npm run get-subscription-product-ids --help
 ```
 
 ### Using the REST API
@@ -33,13 +33,13 @@ curl "http://localhost:3000/api/apps/bundle/com.vtech.plus/subscription-product-
 ### Method 1: Command Line Script
 
 ```bash
-npm run get-product-ids <bundle-id>
+npm run get-subscription-product-ids <bundle-id>
 ```
 
 **Examples:**
 ```bash
-npm run get-product-ids com.vtech.plus
-npm run get-product-ids com.example.myapp
+npm run get-subscription-product-ids com.vtech.plus
+npm run get-subscription-product-ids com.example.myapp
 ```
 
 **Output:**
@@ -187,14 +187,14 @@ getProductIds('com.vtech.plus');
 
 ### 1. Verify Subscription Setup
 ```bash
-npm run get-product-ids com.yourapp.bundle
+npm run get-subscription-product-ids com.yourapp.bundle
 
 # Verify all expected product IDs are present
 ```
 
 ### 2. Copy Product IDs for Testing
 ```bash
-npm run get-product-ids com.yourapp.bundle
+npm run get-subscription-product-ids com.yourapp.bundle
 
 # Copy the comma-separated list from output
 # Use in your app's testing configuration
@@ -208,7 +208,7 @@ curl "http://localhost:3000/api/apps/bundle/com.yourapp.bundle/subscription-prod
 ### 4. Audit Subscriptions
 ```bash
 # Export to JSON for analysis
-npm run get-product-ids com.yourapp.bundle
+npm run get-subscription-product-ids com.yourapp.bundle
 
 # Review the generated JSON file
 cat subscription-product-ids-com.yourapp.bundle.json | jq '.subscriptions[] | select(.state != "APPROVED")'
@@ -236,7 +236,7 @@ async function generateDocs(bundleId) {
 ### Bundle ID Not Found
 
 ```bash
-npm run get-product-ids com.nonexistent.app
+npm run get-subscription-product-ids com.nonexistent.app
 ```
 
 **Error:**
@@ -249,7 +249,7 @@ npm run get-product-ids com.nonexistent.app
    Tips:
    - Verify the bundle ID is correct
    - Check that the app exists in your App Store Connect account
-   - Run: npm run get-apps to see all available apps
+   - Run: npm run get-all-apps to see all available apps
 ```
 
 ### No Subscriptions Found
@@ -283,7 +283,7 @@ npm run debug-auth
 **Solution:**
 1. Verify bundle ID is correct
 2. Check app exists in App Store Connect
-3. List all apps: `npm run get-apps`
+3. List all apps: `npm run get-all-apps`
 
 ### Problem: "No subscriptions found"
 
@@ -351,7 +351,7 @@ Instead, we must:
 ```bash
 #!/bin/bash
 BUNDLE_ID="com.example.app"
-PRODUCT_IDS=$(npm run --silent get-product-ids $BUNDLE_ID | grep -A 1000 "Product IDs (comma-separated" | tail -2 | head -1)
+PRODUCT_IDS=$(npm run --silent get-subscription-product-ids $BUNDLE_ID | grep -A 1000 "Product IDs (comma-separated" | tail -2 | head -1)
 echo "Found product IDs: $PRODUCT_IDS"
 ```
 
@@ -408,7 +408,7 @@ curl -s "http://localhost:3000/api/apps/bundle/com.vtech.plus/subscription-produ
 
 ```bash
 # List all apps to find bundle IDs
-npm run get-apps
+npm run get-all-apps
 
 # Get detailed app information
 curl "http://localhost:3000/api/apps/{appId}"
@@ -460,7 +460,7 @@ npm run debug-auth
 For issues or questions:
 1. Check this documentation
 2. Run `npm run debug-auth` for authentication issues
-3. Run `npm run get-apps` to list available apps
+3. Run `npm run get-all-apps` to list available apps
 4. Review logs in `logs/` directory
 5. Check Apple App Store Connect API documentation
 
@@ -470,7 +470,7 @@ For issues or questions:
 
 **Two ways to use it:**
 
-1. **Script**: `npm run get-product-ids com.yourapp.bundle`
+1. **Script**: `npm run get-subscription-product-ids com.yourapp.bundle`
 2. **REST API**: `GET /api/apps/bundle/:bundleId/subscription-product-ids`
 
 Both methods return:

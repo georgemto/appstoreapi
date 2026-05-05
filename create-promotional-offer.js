@@ -4,7 +4,7 @@ const logger = require('./src/utils/logger');
 
 /**
  * Script to create a promotional offer for a subscription
- * Usage: npm run create-promo-offer <subscription-id> [options]
+ * Usage: npm run create-promotional-offer <subscription-id> [options]
  */
 async function createPromotionalOffer() {
   try {
@@ -181,7 +181,7 @@ function showHelp() {
 Creates a promotional offer for a specific subscription.
 
 Usage:
-  npm run create-promo-offer <subscription-id> [options]
+  npm run create-promotional-offer <subscription-id> [options]
 
 Arguments:
   subscription-id     The UUID of the subscription
@@ -204,25 +204,25 @@ Options:
 
 Examples:
   # List available price points for a subscription
-  npm run create-promo-offer abc123-def456-ghi789 --list-price-points
+  npm run create-promotional-offer abc123-def456-ghi789 --list-price-points
 
   # Create a free trial offer (no price point needed)
-  npm run create-promo-offer abc123-def456-ghi789 --name "Free Trial" --mode FREE_TRIAL --periods 1 --duration ONE_WEEK
+  npm run create-promotional-offer abc123-def456-ghi789 --name "Free Trial" --mode FREE_TRIAL --periods 1 --duration ONE_WEEK
 
   # Create a discounted offer with specific price point (USA only)
-  npm run create-promo-offer abc123-def456-ghi789 --name "50% Off" --mode PAY_AS_YOU_GO --price-point "price-point-id-here" --territories USA
+  npm run create-promotional-offer abc123-def456-ghi789 --name "50% Off" --mode PAY_AS_YOU_GO --price-point "price-point-id-here" --territories USA
   
   # ✨ NEW: Create a discounted offer for MULTIPLE territories (auto-converts price tier)
-  npm run create-promo-offer abc123-def456-ghi789 --name "Global 50% Off" --mode PAY_AS_YOU_GO --price-point "usa-price-point-id" --territories USA,GBR,CAN,AUS
+  npm run create-promotional-offer abc123-def456-ghi789 --name "Global 50% Off" --mode PAY_AS_YOU_GO --price-point "usa-price-point-id" --territories USA,GBR,CAN,AUS
 
   # Create with custom name and duration
-  npm run create-promo-offer abc123-def456-ghi789 --name "Spring Sale" --duration ONE_MONTH --mode FREE_TRIAL
+  npm run create-promotional-offer abc123-def456-ghi789 --name "Spring Sale" --duration ONE_MONTH --mode FREE_TRIAL
 
   # Create with custom offer code
-  npm run create-promo-offer abc123-def456-ghi789 --name "Summer Sale" --code SUMMER2024 --mode FREE_TRIAL
+  npm run create-promotional-offer abc123-def456-ghi789 --name "Summer Sale" --code SUMMER2024 --mode FREE_TRIAL
 
   # Create with custom prefix for auto-generated code
-  npm run create-promo-offer abc123-def456-ghi789 --name "Black Friday" --prefix BLACKFRI --mode FREE_TRIAL
+  npm run create-promotional-offer abc123-def456-ghi789 --name "Black Friday" --prefix BLACKFRI --mode FREE_TRIAL
 
 Notes:
   - FREE_TRIAL mode does not require a price point (always $0)
@@ -252,9 +252,9 @@ Notes:
      Requires code modification to pass object format
 
 Related Commands:
-  npm run get-product-ids <bundle-id>     # Get subscription IDs for a bundle ID
-  npm run get-promo-offers <bundle-id>    # List all promotional offers
-  npm run bulk-create-promo               # Bulk create offers
+  npm run get-subscription-product-ids <bundle-id>     # Get subscription IDs for a bundle ID
+  npm run get-promotional-offers <bundle-id>    # List all promotional offers
+  npm run bulk-create-promotional-offers               # Bulk create offers
   `);
 }
 

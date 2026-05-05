@@ -93,7 +93,7 @@ async function getAllAppsInfo() {
     } else if (error.message && error.message.includes('timeout')) {
       console.error('\n⏱️  Timeout Error:');
       console.error('   The request took too long. Try reducing the limit or check your network connection.');
-      console.error('   Usage: npm run get-apps -- --limit=10');
+      console.error('   Usage: npm run get-all-apps -- --limit=10');
     }
     
     logger.error('Failed to retrieve apps', { error: error.message, stack: error.stack });
@@ -107,10 +107,10 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
 📱 Get All Apps Script
 
 Usage:
-  npm run get-apps                      # Get apps (default: 50)
-  npm run get-apps -- --limit=100       # Get up to 100 apps
-  npm run get-apps -- --limit=10        # Get 10 apps (faster for testing)
-  npm run get-apps -- --include-versions # Include app store versions
+  npm run get-all-apps                      # Get apps (default: 50)
+  npm run get-all-apps -- --limit=100       # Get up to 100 apps
+  npm run get-all-apps -- --limit=10        # Get 10 apps (faster for testing)
+  npm run get-all-apps -- --include-versions # Include app store versions
 
 Options:
   --limit=N              Number of apps to retrieve (1-200, default: 50)
@@ -118,9 +118,9 @@ Options:
   --help, -h            Show this help message
 
 Examples:
-  npm run get-apps
-  npm run get-apps -- --limit=200
-  npm run get-apps -- --limit=10 --include-versions
+  npm run get-all-apps
+  npm run get-all-apps -- --limit=200
+  npm run get-all-apps -- --limit=10 --include-versions
 
 Output:
   - Console: Formatted list of apps
