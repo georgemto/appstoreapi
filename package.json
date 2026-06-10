@@ -35,7 +35,9 @@
     "get-android-offers": "node get-android-offers.js",
     "bulk-create-android-offers": "node bulk-create-android-offers.js",
     "activate-android-offers": "node activate-android-offers.js",
-    "update-android-offers": "node update-android-offers.js"
+    "update-android-offers": "node update-android-offers.js",
+    "get-app-ratings": "node get-app-ratings.js",
+    "get-app-ratings-batch": "node get-app-ratings-batch.js"
   },
   "keywords": [
     "apple",
@@ -47,6 +49,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.0",
     "app_store_connect_api": "file:apis",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
