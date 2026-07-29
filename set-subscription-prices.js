@@ -18,8 +18,6 @@ const appService = require('./src/services/apps');
 const subscriptionService = require('./src/services/subscriptions');
 const logger = require('./src/utils/logger');
 
-const BUNDLE_ID = 'com.vtech.plus.uat';
-
 /**
  * Display help message
  */
@@ -35,15 +33,27 @@ Arguments:
   json-file-path    Path to the JSON file (output from generate-product-ids.js)
 
 Options:
-  --dry-run              Preview what would be set without making changes
+  --bundle-id <id>       Bundle ID to target. Overrides the JSON file's bundleId.
+                         Required if the JSON file has no "bundleId". Accepts
+                         --bundle-id <id> or --bundle-id=<id>.
+  --start-date <date>    Date the new price takes effect (YYYY-MM-DD).
+                         Defaults to today.
+  --no-preserve-current-price
+                         Apply the new price to existing subscribers too. By
+                         default existing subscribers keep their current price and
+                         only new subscribers get the new price. (Price increases
+                         applied to existing subscribers trigger Apple's consent flow.)
+  --dry-run              Validate prices and preview changes without applying them
   --refresh-territories  Force refresh territories list from API (otherwise cached)
   --help, -h             Show this help message
 
 Examples:
   node set-subscription-prices.js product-ids-test3.json
+  node set-subscription-prices.js product-ids-test3.json --bundle-id com.example.app
+  node set-subscription-prices.js product-ids-test3.json --start-date 2026-07-01
+  node set-subscription-prices.js product-ids-test3.json --no-preserve-current-price
   node set-subscription-prices.js product-ids-test3.json --dry-run
-  node set-subscription-prices.js product-ids-test3.json --refresh-territories
-  npm run set-subscription-prices -- product-ids-test3.json
+  npm run set-subscription-prices -- product-ids-test3.json --bundle-id=com.example.app
 
 Process:
   1. Reads the JSON file with subscription data (including USD prices)
@@ -63,6 +73,96 @@ Note:
 }
 
 /**
+ * Get the value following a flag, supporting both "--flag value" and "--flag=value".
+ */
+function getArgValue(args, flag) {
+  const eqPrefix = `${flag}=`;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === flag) {
+      return i + 1 < args.length ? args[i + 1] : null;
+    }
+    if (a.startsWith(eqPrefix)) {
+      return a.slice(eqPrefix.length);
+    }
+  }
+  return null;
+}
+
+// Flags that take a value ("--flag value" or "--flag=value").
+const VALUE_FLAGS = new Set(['--bundle-id', '--start-date']);
+
+// Boolean flags that take no value.
+const BOOLEAN_FLAGS = new Set([
+  '--dry-run', '--refresh-territories', '--no-preserve-current-price', '--help', '-h'
+]);
+
+/**
+ * Validate the CLI args and collect positionals in a single pass:
+ *   - every flag must be recognized (catches typos like --bundleid)
+ *   - value flags must be followed by a real value, not another flag or nothing
+ *   - boolean flags must not be given an inline value (--dry-run=foo)
+ *   - exactly one positional (the JSON file path) is allowed
+ * Returns { errors: string[], positionals: string[] }.
+ */
+function validateArgs(args) {
+  const errors = [];
+  const positionals = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+
+    if (!a.startsWith('-')) {
+      positionals.push(a);
+      continue;
+    }
+
+    const eqIdx = a.indexOf('=');
+    const flag = eqIdx === -1 ? a : a.slice(0, eqIdx);
+    const inlineValue = eqIdx === -1 ? null : a.slice(eqIdx + 1);
+
+    if (VALUE_FLAGS.has(flag)) {
+      if (inlineValue !== null) {
+        if (inlineValue === '') {
+          errors.push(`Option "${flag}" requires a value (got "${a}")`);
+        }
+      } else {
+        const next = args[i + 1];
+        if (next === undefined || next.startsWith('-')) {
+          errors.push(`Option "${flag}" requires a value`);
+        } else {
+          i++; // consume the value so it isn't treated as a positional
+        }
+      }
+    } else if (BOOLEAN_FLAGS.has(flag)) {
+      if (inlineValue !== null) {
+        errors.push(`Option "${flag}" does not take a value`);
+      }
+    } else {
+      errors.push(`Unknown option: "${a}"`);
+    }
+  }
+
+  if (positionals.length === 0) {
+    errors.push('JSON file path is required');
+  } else if (positionals.length > 1) {
+    errors.push(`Unexpected extra argument(s): ${positionals.slice(1).join(', ')}`);
+  }
+
+  return { errors, positionals };
+}
+
+/**
+ * True if `s` is a real calendar date in YYYY-MM-DD form. Rejects both bad shapes
+ * ("2026-7-1") and impossible dates ("2026-13-40", "2026-02-30").
+ */
+function isValidIsoDate(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+/**
  * Main function
  */
 async function main() {
@@ -74,17 +174,51 @@ async function main() {
     process.exit(0);
   }
   
-  // Check for dry-run flag
-  const dryRun = args.includes('--dry-run');
-  const refreshTerritories = args.includes('--refresh-territories');
-  const jsonPath = args.find(arg => !arg.startsWith('--'));
-  
-  if (!jsonPath) {
-    console.error('Error: JSON file path is required\n');
+  // Validate flag syntax up front and collect the positional JSON path. Reports
+  // every structural problem at once: unknown/misspelled flags, value flags with
+  // a missing value, boolean flags given a value, and extra positionals.
+  const { errors: argErrors, positionals } = validateArgs(args);
+  if (argErrors.length > 0) {
+    argErrors.forEach(e => console.error(`Error: ${e}`));
+    console.error('');
     showHelp();
     process.exit(1);
   }
-  
+  const jsonPath = positionals[0];
+
+  // Flags (syntactically validated above).
+  const dryRun = args.includes('--dry-run');
+  const refreshTerritories = args.includes('--refresh-territories');
+
+  // Keep existing subscribers on their current price by default; the new price
+  // applies to new subscribers only. Pass --no-preserve-current-price to apply
+  // the change to all subscribers (price increases trigger Apple's consent flow).
+  const preserveCurrentPrice = !args.includes('--no-preserve-current-price');
+
+  // Validate the *values* of the value-taking flags.
+  const valueErrors = [];
+
+  // Optional bundle ID override: --bundle-id <id> or --bundle-id=<id>.
+  // Takes precedence over the JSON file's bundleId.
+  const cliBundleId = getArgValue(args, '--bundle-id');
+  if (cliBundleId !== null && !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(cliBundleId)) {
+    valueErrors.push(`--bundle-id "${cliBundleId}" is not a valid bundle identifier (alphanumerics, dots, hyphens)`);
+  }
+
+  // Date the new price takes effect: --start-date <YYYY-MM-DD> (defaults to today).
+  const today = new Date().toISOString().split('T')[0];
+  const startDate = getArgValue(args, '--start-date') || today;
+  if (!isValidIsoDate(startDate)) {
+    valueErrors.push(`--start-date must be a valid date in YYYY-MM-DD format (got "${startDate}")`);
+  }
+
+  if (valueErrors.length > 0) {
+    valueErrors.forEach(e => console.error(`Error: ${e}`));
+    console.error('');
+    process.exit(1);
+  }
+
+
   if (!fs.existsSync(jsonPath)) {
     console.error(`Error: File not found: ${jsonPath}`);
     process.exit(1);
@@ -101,17 +235,41 @@ async function main() {
   if (refreshTerritories) {
     console.log('[REFRESH] Will force refresh territories from API\n');
   }
-  
+
+  console.log(`Start date: ${startDate}${startDate === today ? ' (today)' : ''}`);
+  console.log(`Preserve current price: ${preserveCurrentPrice}`);
+
   try {
     // Read JSON file
-    const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    } catch (parseError) {
+      throw new Error(`Could not parse JSON file "${jsonPath}": ${parseError.message}`);
+    }
+
+    if (!Array.isArray(data.subscriptionGroups)) {
+      throw new Error(
+        'Invalid input file: expected a "subscriptionGroups" array ' +
+        '(is this the output of generate-product-ids.js?)'
+      );
+    }
+
+    // Resolve the bundle ID: CLI flag wins, otherwise the JSON file's bundleId.
+    const bundleId = cliBundleId || data.bundleId;
+    if (!bundleId) {
+      throw new Error(
+        'No bundle ID provided. Pass --bundle-id <id> or include "bundleId" in the JSON file.'
+      );
+    }
+
     console.log(`\nSource file: ${jsonPath}`);
-    console.log(`Bundle ID: ${data.bundleId || BUNDLE_ID}`);
-    
+    console.log(`Bundle ID: ${bundleId}${cliBundleId ? ' (from --bundle-id)' : ''}`);
+
     // Get app information and existing subscriptions
     console.log('\nFetching subscription data from App Store Connect...');
     const existingData = await appService.getSubscriptionProductIdsByBundleId(
-      data.bundleId || BUNDLE_ID,
+      bundleId,
       { useCache: false }
     );
     
@@ -128,6 +286,7 @@ async function main() {
     const results = {
       total: 0,
       success: 0,
+      partial: 0,
       failed: 0,
       skipped: 0,
       noPrice: 0,
@@ -137,6 +296,11 @@ async function main() {
     
     // Track if territories have been fetched (for first subscription only)
     let territoriesFetched = false;
+
+    // Track whether a live price write has already happened, so the
+    // inter-subscription rate-limit delay only fires *between* writes — never
+    // before the first or after the last.
+    let priorWrite = false;
     
     // Process each subscription group
     console.log('\n' + '-'.repeat(70));
@@ -145,7 +309,12 @@ async function main() {
     
     for (const group of data.subscriptionGroups) {
       console.log(`\nGroup: ${group.groupName}`);
-      
+
+      if (!Array.isArray(group.subscriptions)) {
+        console.log(`    [SKIP] Group "${group.groupName}" has no "subscriptions" array`);
+        continue;
+      }
+
       for (const subscription of group.subscriptions) {
         results.total++;
         const productId = subscription.productId;
@@ -161,8 +330,9 @@ async function main() {
           continue;
         }
         
-        // Check if price is specified
-        if (!price) {
+        // Check if price is specified (treat only null/undefined as missing, so
+        // a legitimate $0 isn't silently dropped)
+        if (price == null) {
           console.log(`    [NO PRICE] No price specified in JSON`);
           results.noPrice++;
           continue;
@@ -170,59 +340,86 @@ async function main() {
         
         console.log(`    Subscription ID: ${existingSub.id}`);
         console.log(`    Target USD Price: $${price}`);
-        
-        if (dryRun) {
-          console.log(`    [DRY-RUN] Would set price to $${price} USD for all territories`);
-          results.skipped++;
-          continue;
+
+        // Rate-limit between live price writes (the service issues one write per
+        // territory, ~175 per subscription). Skip for dry-run (read-only) and
+        // before the first write, so there's no needless delay at the start/end.
+        if (!dryRun) {
+          if (priorWrite) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+          priorWrite = true;
         }
-        
+
         try {
-          // Set prices for all territories
-          console.log(`    Setting prices for all territories...`);
-          
-          // Force refresh territories on first subscription if --refresh-territories flag is set
+          // Force refresh territories on the first call if --refresh-territories
+          // is set. Mark it consumed immediately so a later failure can't trigger
+          // a redundant second refresh.
           const forceRefresh = refreshTerritories && !territoriesFetched;
-          
+          territoriesFetched = true;
+
+          // Run dry-run through the service too: it still performs the price-point
+          // lookup (and throws if the USD price has no matching Apple price point),
+          // so a dry-run actually validates prices instead of just echoing them.
+          if (dryRun) {
+            console.log(`    Validating price point (dry-run)...`);
+          } else {
+            console.log(`    Setting prices for all territories...`);
+          }
+
           const priceResults = await subscriptionService.setSubscriptionPricesAllTerritories(
             existingSub.id,
             price,
             {
-              dryRun: false,
+              dryRun,
               forceRefreshTerritories: forceRefresh,
-              onProgress: (territory, success, error) => {
-                if (success) {
-                  process.stdout.write('.');
-                } else {
-                  process.stdout.write('x');
-                }
+              startDate,
+              preserveCurrentPrice,
+              onProgress: (_territory, success) => {
+                process.stdout.write(success ? '.' : 'x');
               }
             }
           );
-          
-          // Mark territories as fetched after first successful call
-          territoriesFetched = true;
-          
-          console.log(''); // New line after progress dots
-          console.log(`    [SUCCESS] Set prices: ${priceResults.success}/${priceResults.total} territories`);
-          
-          if (priceResults.failed > 0) {
-            console.log(`    [PARTIAL] ${priceResults.failed} territories failed`);
-            priceResults.errors.slice(0, 3).forEach(err => {
-              console.log(`      - ${err.territory}: ${err.error}`);
-            });
+
+          if (dryRun) {
+            console.log(`    [DRY-RUN] Price point valid; would set $${price} USD for ${priceResults.total} territories`);
+            results.skipped++;
+          } else {
+            console.log(''); // New line after progress dots
+            if (priceResults.failed > 0) {
+              const failedTerritories = priceResults.errors.map(e => e.territory);
+              console.log(`    [PARTIAL] Set ${priceResults.success}/${priceResults.total} territories; ${priceResults.failed} failed`);
+              priceResults.errors.slice(0, 3).forEach(err => {
+                console.log(`      - ${err.territory}: ${err.error}`);
+              });
+              if (priceResults.errors.length > 3) {
+                console.log(`      ... and ${priceResults.errors.length - 3} more (full list in the summary)`);
+              }
+              // Persist the failed territories to the log file (console output is
+              // not captured by the file logger).
+              logger.warn('Subscription price partially set', {
+                productId,
+                failed: priceResults.failed,
+                total: priceResults.total,
+                failedTerritories
+              });
+              results.partial++;
+              results.errors.push({
+                productId,
+                error: `${priceResults.failed}/${priceResults.total} territories failed`,
+                territories: failedTerritories
+              });
+            } else {
+              console.log(`    [SUCCESS] Set prices: ${priceResults.success}/${priceResults.total} territories`);
+              results.success++;
+            }
           }
-          
-          results.success++;
-          
+
         } catch (error) {
           console.log(`    [ERROR] ${error.message}`);
           results.failed++;
           results.errors.push({ productId, error: error.message });
         }
-        
-        // Add a delay between subscriptions to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
     
@@ -232,24 +429,31 @@ async function main() {
     console.log('='.repeat(70));
     console.log(`\nSubscriptions Processed: ${results.total}`);
     console.log(`  Prices Set Successfully: ${results.success}`);
+    console.log(`  Partially Set (some territories failed): ${results.partial}`);
     console.log(`  Failed: ${results.failed}`);
     console.log(`  Not Found: ${results.notFound}`);
     console.log(`  No Price Specified: ${results.noPrice}`);
-    
+
     if (dryRun) {
-      console.log(`  Skipped (Dry Run): ${results.skipped}`);
+      console.log(`  Validated (Dry Run): ${results.skipped}`);
       console.log('\n[DRY-RUN] No changes were made. Remove --dry-run to execute.');
     }
-    
+
     if (results.errors.length > 0) {
       console.log('\nErrors:');
       results.errors.forEach(err => {
-        console.log(`  - ${err.productId}: ${err.error}`);
+        if (err.territories && err.territories.length > 0) {
+          console.log(`  - ${err.productId}: ${err.error} (${err.territories.join(', ')})`);
+        } else {
+          console.log(`  - ${err.productId}: ${err.error}`);
+        }
       });
     }
-    
-    // Exit with error code if any failures
-    if (results.failed > 0) {
+
+    // Exit non-zero if any subscription fully failed or only partially applied —
+    // a partial run leaves prices inconsistent across territories and shouldn't
+    // read as success to anything checking the exit code.
+    if (results.failed > 0 || results.partial > 0) {
       process.exit(1);
     }
     
@@ -260,4 +464,8 @@ async function main() {
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(`\nUnexpected error: ${error.message}`);
+  logger.error('Set subscription prices crashed:', error);
+  process.exit(1);
+});

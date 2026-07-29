@@ -155,6 +155,52 @@ class GooglePlayClient {
   }
 
   /**
+   * Patch (update) an existing subscription. The primary use here is changing a
+   * base plan's regional prices: GET the subscription, swap the prices in its
+   * basePlans[].regionalConfigs, then patch with updateMask 'basePlans'. Because
+   * `basePlans` is a repeated field, the patch replaces the whole array, so the
+   * caller must pass *all* base plans (only the targeted one modified).
+   *
+   * The new prices apply to NEW subscribers only; existing subscribers keep their
+   * price until migrateBasePlanPrices() is called.
+   *
+   * @param {string} packageName - The Android package name
+   * @param {string} productId - The subscription product ID
+   * @param {object} subscriptionData - The subscription resource to write (must
+   *   include every field named in updateMask)
+   * @param {string} updateMask - Comma-separated fields to update (e.g. 'basePlans')
+   * @param {string} regionsVersion - Play "regions version" (e.g. "2025/03"),
+   *   required whenever the patch touches regional pricing
+   * @returns {object} Updated subscription
+   */
+  async patchSubscription(packageName, productId, subscriptionData, updateMask, regionsVersion) {
+    await this.ensureInitialized();
+
+    try {
+      const params = {
+        packageName,
+        productId,
+        'regionsVersion.version': regionsVersion || '2025/03',
+        requestBody: subscriptionData
+      };
+
+      if (updateMask) {
+        params.updateMask = updateMask;
+      }
+
+      const response = await this.androidPublisher.monetization.subscriptions.patch(params);
+
+      logger.info(`Patched subscription ${productId} for package ${packageName}`, {
+        updateMask: updateMask || '(none)'
+      });
+
+      return response.data;
+    } catch (error) {
+      this.handleApiError(error, 'patchSubscription', { packageName, productId });
+    }
+  }
+
+  /**
    * Activate a base plan for a subscription
    * @param {string} packageName - The Android package name
    * @param {string} productId - The subscription product ID
@@ -222,6 +268,51 @@ class GooglePlayClient {
       return { success: true };
     } catch (error) {
       this.handleApiError(error, 'deleteBasePlan', { packageName, productId, basePlanId });
+    }
+  }
+
+  /**
+   * Migrate existing subscribers of a base plan onto its current price. Patching
+   * a base plan price only affects new subscribers; this moves existing
+   * subscribers (those in price cohorts older than oldestAllowedPriceVersionTime)
+   * to the current price. Price increases trigger Google Play's notification /
+   * consent flow (governed by priceIncreaseType); decreases take effect at the
+   * subscriber's next renewal.
+   *
+   * @param {string} packageName - The Android package name
+   * @param {string} productId - The subscription product ID
+   * @param {string} basePlanId - The base plan ID to migrate
+   * @param {Array<object>} regionalPriceMigrations - Per-region migration configs:
+   *   { regionCode, oldestAllowedPriceVersionTime, priceIncreaseType? }
+   * @param {string} regionsVersion - Play "regions version" (e.g. "2025/03"); must
+   *   match the version the regional prices were generated under
+   * @returns {object} Migration result
+   */
+  async migrateBasePlanPrices(packageName, productId, basePlanId, regionalPriceMigrations, regionsVersion) {
+    await this.ensureInitialized();
+
+    try {
+      const response = await this.androidPublisher.monetization.subscriptions.basePlans.migratePrices({
+        packageName,
+        productId,
+        basePlanId,
+        requestBody: {
+          packageName,
+          productId,
+          basePlanId,
+          regionalPriceMigrations,
+          regionsVersion: { version: regionsVersion || '2025/03' }
+        }
+      });
+
+      logger.info(`Migrated prices for base plan ${basePlanId} of ${productId}`, {
+        packageName,
+        regionCount: regionalPriceMigrations.length
+      });
+
+      return response.data;
+    } catch (error) {
+      this.handleApiError(error, 'migrateBasePlanPrices', { packageName, productId, basePlanId });
     }
   }
 

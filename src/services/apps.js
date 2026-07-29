@@ -304,17 +304,21 @@ class AppService {
       // Fetch from Apple API
       logger.info(`Fetching subscription data from Apple API for "${bundleId}"`);
 
-      // First, get the app by bundle ID
+      // First, get the app by bundle ID. Apple's filter[bundleId] matches by
+      // prefix, not exact value (e.g. "com.example.app" also matches
+      // "com.example.app.uat1"), so fetch multiple candidates and pick the
+      // one whose bundleId is an exact match rather than trusting data[0].
       const appResponse = await this.getAllApps({
         bundleId: bundleId,
-        limit: 1
+        limit: 50
       });
 
-      if (!appResponse.data || appResponse.data.length === 0) {
+      const app = (appResponse.data || []).find(a => a.attributes?.bundleId === bundleId);
+
+      if (!app) {
         throw new NotFoundError(`App with bundle ID "${bundleId}" not found`);
       }
 
-      const app = appResponse.data[0];
       const appId = app.id;
       const appName = app.attributes?.name;
 

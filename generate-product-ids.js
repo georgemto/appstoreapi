@@ -17,8 +17,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const BUNDLE_ID = 'com.vtech.plus.inapp.ios.test3';
-const OUTPUT_FILE = 'product-ids-test3.json';
+const BUNDLE_ID = 'com.vtech.vcare';
+const OUTPUT_FILE = 'product-ids.json';
 
 /**
  * Parse CSV content into an array of objects

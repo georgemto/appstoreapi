@@ -531,18 +531,36 @@ class SubscriptionService {
    * Set subscription price for a specific territory
    * @param {string} subscriptionId - Subscription ID
    * @param {string} pricePointId - Price point ID
-   * @param {Date} startDate - Optional start date (defaults to now)
+   * @param {Object} options - Options
+   * @param {string|Date} options.startDate - Date the price takes effect (defaults to today)
+   * @param {boolean} options.preserveCurrentPrice - Keep existing subscribers on their current price (default true)
    * @returns {Object} Created price object
    */
-  async setSubscriptionPrice(subscriptionId, pricePointId, startDate = null) {
+  async setSubscriptionPrice(subscriptionId, pricePointId, options = {}) {
+    const { startDate = null, preserveCurrentPrice = true } = options;
     try {
       if (!subscriptionId || !pricePointId) {
         throw new ValidationError('Subscription ID and price point ID are required');
       }
 
+      // Apple treats a subscriptionPrice with no startDate as the *initial* price,
+      // which can only be set before the subscription is approved. Always send a
+      // startDate (default: today) so an approved/live subscription records this
+      // as a scheduled price change instead — otherwise Apple returns
+      // STATE_ERROR 409 "Initial price cannot be created again after approval".
+      const effectiveStartDate = startDate
+        ? (startDate instanceof Date ? startDate.toISOString().split('T')[0] : startDate)
+        : new Date().toISOString().split('T')[0];
+
       const payload = {
         data: {
           type: 'subscriptionPrices',
+          attributes: {
+            startDate: effectiveStartDate,
+            // Keep existing subscribers on their current price by default; the new
+            // price applies to new subscribers only unless explicitly overridden.
+            preserveCurrentPrice
+          },
           relationships: {
             subscription: {
               data: {
@@ -560,16 +578,9 @@ class SubscriptionService {
         }
       };
 
-      // Add start date if provided
-      if (startDate) {
-        payload.data.attributes = {
-          startDate: startDate instanceof Date ? startDate.toISOString().split('T')[0] : startDate
-        };
-      }
-
       const response = await appStoreClient.post('/subscriptionPrices', payload);
-      
-      logger.info(`Set price for subscription ${subscriptionId} using price point ${pricePointId}`);
+
+      logger.info(`Set price for subscription ${subscriptionId} using price point ${pricePointId} (startDate ${effectiveStartDate}, preserveCurrentPrice ${preserveCurrentPrice})`);
       return response;
     } catch (error) {
       logger.error(`Failed to set subscription price:`, error);
@@ -585,10 +596,18 @@ class SubscriptionService {
    * @param {boolean} options.dryRun - If true, return what would be done without making changes
    * @param {boolean} options.forceRefreshTerritories - Force refresh territories cache from API
    * @param {Function} options.onProgress - Progress callback (territory, success, error)
+   * @param {string|Date} options.startDate - Date the price takes effect (defaults to today)
+   * @param {boolean} options.preserveCurrentPrice - Keep existing subscribers on their current price (default true)
    * @returns {Object} Results with success/failure counts
    */
   async setSubscriptionPricesAllTerritories(subscriptionId, usdPrice, options = {}) {
-    const { dryRun = false, forceRefreshTerritories = false, onProgress = null } = options;
+    const {
+      dryRun = false,
+      forceRefreshTerritories = false,
+      onProgress = null,
+      startDate = null,
+      preserveCurrentPrice = true
+    } = options;
 
     // Get territories from cache (or fetch once if not cached)
     const territories = await this.getAvailableTerritories({ 
@@ -624,7 +643,7 @@ class SubscriptionService {
     for (const territory of territories) {
       try {
         const pricePointId = this.buildPricePointId(subscriptionId, territory, priceTier);
-        await this.setSubscriptionPrice(subscriptionId, pricePointId);
+        await this.setSubscriptionPrice(subscriptionId, pricePointId, { startDate, preserveCurrentPrice });
         results.success++;
         
         if (onProgress) {
